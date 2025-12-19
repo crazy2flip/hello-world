@@ -105,11 +105,11 @@ describe('pinning and exiting', () => {
   });
 });
 
-describe('five and slide', () => {
-  it('slides past single full stack', () => {
-    const state = withState({
-      board: [
-        [token('RED')],
+  describe('five and slide', () => {
+    it('slides past single full stack', () => {
+      const state = withState({
+        board: [
+          [token('RED')],
         Array(5).fill(token('BLUE')),
         [],
         [],
@@ -172,10 +172,83 @@ describe('five and slide', () => {
       ],
       currentIndex: 0
     });
-    const after = applyAction(movable, { type: 'move', from: 2, dir: 'backward', count: 1 });
-    expect(after.board[0].at(-1)?.player).toBe('RED');
+      const after = applyAction(movable, { type: 'move', from: 2, dir: 'backward', count: 1 });
+      expect(after.board[0].at(-1)?.player).toBe('RED');
+    });
+
+    it('allows overfilling then sliding overflow forward', () => {
+      const state = withState({
+        board: [
+          [token('RED'), token('RED')],
+          [token('BLUE'), token('BLUE'), token('BLUE'), token('BLUE')],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        currentIndex: 0
+      });
+
+      const options = getMoveOptions(state).filter(
+        (m) => m.from === 0 && m.dir === 'forward' && m.count === 2
+      );
+      expect(options.length).toBe(1);
+
+      const after = applyAction(state, options[0]);
+      expect(after.board[1]).toHaveLength(5);
+      expect(after.board[1].at(-1)?.player).toBe('RED');
+      expect(after.board[2]).toHaveLength(1);
+      expect(after.board[2].at(-1)?.player).toBe('RED');
+    });
+
+    it('lets overflow exit after filling forward stacks', () => {
+      const state = withState({
+        board: [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [token('RED'), token('RED'), token('RED')],
+          [token('BLUE'), token('BLUE'), token('BLUE'), token('BLUE')]
+        ],
+        currentIndex: 0,
+        exited: { RED: 0, BLUE: 0 }
+      });
+
+      const after = applyAction(state, { type: 'move', from: 6, dir: 'forward', count: 3 });
+      expect(after.board[7]).toHaveLength(5);
+      expect(after.board[7].at(-1)?.player).toBe('RED');
+      expect(after.exited.RED).toBe(2);
+    });
+
+    it('slides overflow backward and leaves remainder at the source', () => {
+      const state = withState({
+        board: [
+          Array(5).fill(token('BLUE')),
+          [token('BLUE'), token('BLUE'), token('BLUE'), token('BLUE')],
+          [token('BLUE'), token('RED'), token('RED'), token('RED')],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        currentIndex: 0
+      });
+
+      const after = applyAction(state, { type: 'move', from: 2, dir: 'backward', count: 3 });
+
+      expect(after.board[1]).toHaveLength(5);
+      expect(after.board[1].at(-1)?.player).toBe('RED');
+      expect(after.board[0]).toHaveLength(5);
+      expect(after.board[2]).toHaveLength(3);
+      expect(after.board[2].at(-1)?.player).toBe('RED');
+    });
   });
-});
 
 describe('placement rules', () => {
   it('forces placement into space 1 when 2-7 are filled', () => {
