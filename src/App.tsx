@@ -402,9 +402,9 @@ export default function App() {
 
       <div className={`play-area ${!started ? 'disabled' : ''}`}>
         <div className="track">
-          <div className="start-zone card">
-            <h4>Start Zone</h4>
-            <div className="start-info">Drag an unplaced token to the highlighted slot.</div>
+          <div className="space start-space">
+            <div className="space-label">Start</div>
+            <div className="start-info">Drag or tap your reserve to the glowing slot.</div>
             <div className="reserve-list">
               {state.players.map((p) => (
                 <div key={p.id} className="reserve-row">
@@ -431,76 +431,74 @@ export default function App() {
             <div className="placement-callout">{placementInfo}</div>
           </div>
 
-          <div className="board-row">
-            {state.board.map((stack, idx) => {
-              const topCount = topContiguousCount(stack, currentPlayer.id);
-              const topStart = stack.length - topCount;
-              const highlight = destinationOptions.some((opt) => opt.landing?.type === 'space' && opt.landing.index === idx);
-              return (
-                <div
-                  key={idx}
-                  className={`space ${highlight ? 'highlight' : ''} ${placementTarget === idx && canPlaceToken ? 'placement' : ''}`}
-                  onClick={() => {
-                    if (!started) return;
-                    const exitOption = destinationOptions.find((opt) => opt.landing?.type === 'exit');
-                    const spaceOption = destinationOptions.find((opt) => opt.landing?.type === 'space' && opt.landing.index === idx);
-                    if (spaceOption) {
-                      handleDestinationClick(idx);
-                    } else if (!exitOption) {
-                      setSelection(null);
-                    }
-                  }}
-                  onDragOver={(e) => {
-                    const payload = parseDrag(e);
-                    if (
-                      payload?.kind === 'place'
-                        ? placementTarget === idx && canPlaceToken
-                        : payload?.kind === 'move' || (payload?.kind === 'bubble' && bubbleAllowed && payload.space === idx)
-                    ) {
-                      e.preventDefault();
-                      return;
-                    }
-                    // Allow reserve drag payloads even when getData is unavailable in dragover events
-                    if (!payload && started) {
-                      e.preventDefault();
-                    }
-                  }}
-                  onDrop={(e) => handleSpaceDrop(idx, e)}
-                >
-                  <div className="space-label">{idx + 1}</div>
-                  <div className="stack">
-                    {[...stack].reverse().map((token, displayIndex) => {
-                      const actualIndex = stack.length - 1 - displayIndex;
-                      const isTopSegment = selection?.space === idx && actualIndex >= stack.length - selection.count;
-                      const hoverSegment = hoverSelection?.space === idx && actualIndex >= stack.length - hoverSelection.count;
-                      const selectable =
-                        started && actualIndex >= topStart && token.player === currentPlayer.id && !state.winner;
-                      const bubbleSelectable =
-                        bubbleAllowed && token.player === currentPlayer.id && isPinned(stack, actualIndex);
-                      return (
-                        <div
-                          key={actualIndex}
-                          className={tokenClasses(!!isTopSegment, !!hoverSegment)}
-                          style={{ background: state.players.find((p) => p.id === token.player)?.color }}
-                          draggable={(selectable && moveOptions.length > 0) || bubbleSelectable}
-                          onMouseEnter={() => {
-                            if (selectable) setHoverSelection({ space: idx, count: stack.length - actualIndex });
-                          }}
-                          onMouseLeave={() => setHoverSelection(null)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTokenClick(idx, actualIndex);
-                          }}
-                          onDragStart={(e) => handleDragStartToken(e, idx, actualIndex)}
-                        />
-                      );
-                    })}
-                    {highlight && <div className="drop-hint">Drop here</div>}
-                  </div>
+          {state.board.map((stack, idx) => {
+            const topCount = topContiguousCount(stack, currentPlayer.id);
+            const topStart = stack.length - topCount;
+            const highlight = destinationOptions.some((opt) => opt.landing?.type === 'space' && opt.landing.index === idx);
+            return (
+              <div
+                key={idx}
+                className={`space ${highlight ? 'highlight' : ''} ${placementTarget === idx && canPlaceToken ? 'placement' : ''}`}
+                onClick={() => {
+                  if (!started) return;
+                  const exitOption = destinationOptions.find((opt) => opt.landing?.type === 'exit');
+                  const spaceOption = destinationOptions.find((opt) => opt.landing?.type === 'space' && opt.landing.index === idx);
+                  if (spaceOption) {
+                    handleDestinationClick(idx);
+                  } else if (!exitOption) {
+                    setSelection(null);
+                  }
+                }}
+                onDragOver={(e) => {
+                  const payload = parseDrag(e);
+                  if (
+                    payload?.kind === 'place'
+                      ? placementTarget === idx && canPlaceToken
+                      : payload?.kind === 'move' || (payload?.kind === 'bubble' && bubbleAllowed && payload.space === idx)
+                  ) {
+                    e.preventDefault();
+                    return;
+                  }
+                  // Allow reserve drag payloads even when getData is unavailable in dragover events
+                  if (!payload && started) {
+                    e.preventDefault();
+                  }
+                }}
+                onDrop={(e) => handleSpaceDrop(idx, e)}
+              >
+                <div className="space-label">{idx + 1}</div>
+                <div className="stack">
+                  {[...stack].reverse().map((token, displayIndex) => {
+                    const actualIndex = stack.length - 1 - displayIndex;
+                    const isTopSegment = selection?.space === idx && actualIndex >= stack.length - selection.count;
+                    const hoverSegment = hoverSelection?.space === idx && actualIndex >= stack.length - hoverSelection.count;
+                    const selectable =
+                      started && actualIndex >= topStart && token.player === currentPlayer.id && !state.winner;
+                    const bubbleSelectable =
+                      bubbleAllowed && token.player === currentPlayer.id && isPinned(stack, actualIndex);
+                    return (
+                      <div
+                        key={actualIndex}
+                        className={tokenClasses(!!isTopSegment, !!hoverSegment)}
+                        style={{ background: state.players.find((p) => p.id === token.player)?.color }}
+                        draggable={(selectable && moveOptions.length > 0) || bubbleSelectable}
+                        onMouseEnter={() => {
+                          if (selectable) setHoverSelection({ space: idx, count: stack.length - actualIndex });
+                        }}
+                        onMouseLeave={() => setHoverSelection(null)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTokenClick(idx, actualIndex);
+                        }}
+                        onDragStart={(e) => handleDragStartToken(e, idx, actualIndex)}
+                      />
+                    );
+                  })}
+                  {highlight && <div className="drop-hint">Drop here</div>}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })}
 
           <div
             className={`space exit-space ${destinationOptions.some((opt) => opt.landing?.type === 'exit') ? 'highlight' : ''}`}
@@ -512,24 +510,17 @@ export default function App() {
             onClick={() => handleDestinationClick('exit')}
           >
             <div className="space-label">Exit</div>
-            <div className="stack exit-stack">
-              {Array.from({ length: 5 }).map((_, i) => {
-                const hasToken = (state.exited[currentPlayer.id] ?? 0) > i;
-                return (
-                  <div
-                    key={i}
-                    className={`token exit-slot ${hasToken ? 'filled' : ''}`}
-                    style={{ background: hasToken ? currentPlayer.color : undefined }}
-                  />
-                );
-              })}
-            </div>
-            <div className="scores">
+            <div className="exit-grid">
               {state.players.map((p) => (
-                <div key={p.id} className="score-row">
+                <div key={p.id} className="exit-row">
                   <span className="swatch" style={{ background: p.color }} />
                   <span className="reserve-name">{p.name}</span>
-                  <span className="score-pill">{state.exited[p.id]} / 5 exited</span>
+                  <div className="exit-slots">
+                    {Array.from({ length: 5 }).map((_, i) => {
+                      const filled = (state.exited[p.id] ?? 0) > i;
+                      return <div key={i} className={`token exit-slot ${filled ? 'filled' : ''}`} style={{ background: filled ? p.color : undefined }} />;
+                    })}
+                  </div>
                 </div>
               ))}
             </div>
