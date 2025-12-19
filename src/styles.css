@@ -113,12 +113,15 @@ body {
 
 .track {
   display: flex;
-  align-items: flex-end;
-  flex-wrap: nowrap;
+  align-items: center;
   gap: 0.35rem;
-  overflow-x: auto;
-  padding: 0.15rem 0;
+
+  width: 100%;
+  overflow-x: hidden;     /* or remove overflow-x entirely */
+  flex-wrap: nowrap;      /* keep one row */
+  justify-content: center;
 }
+
 
 .space {
   border: 2px solid #cbd5e1;
@@ -128,15 +131,17 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: #fff;
+  background: #55e0f6;
   position: relative;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  flex: 0 0 clamp(86px, 9vw, 120px);
+  flex: 1 1 0;
 }
 
 .start-space {
-  min-width: clamp(160px, 16vw, 205px);
+  min-height: calc(var(--stack-height) + 1rem);
+  flex: 1.5 1 0;
   align-items: stretch;
+  background: #ebecec;
 }
 
 .space.highlight,
@@ -236,6 +241,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  background: #ebecec;
 }
 
 .exit-stack {
