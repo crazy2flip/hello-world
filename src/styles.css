@@ -3,8 +3,8 @@
   line-height: 1.5;
   color: #0f172a;
   background-color: #f8fafc;
-  --chip-size: clamp(36px, 6vw, 68px);
-  --chip-gap: clamp(4px, 0.8vh, 10px);
+  --chip-size: clamp(30px, 4.6vw, 54px);
+  --chip-gap: clamp(3px, 0.6vh, 8px);
   --stack-height: calc(var(--chip-size) * 5 + var(--chip-gap) * 4);
 }
 
@@ -13,8 +13,8 @@ body {
 }
 
 .app {
-  padding: clamp(1rem, 2vw, 1.5rem);
-  max-width: 1400px;
+  padding: clamp(0.75rem, 2vw, 1.25rem);
+  max-width: 1300px;
   margin: 0 auto;
 }
 
@@ -115,27 +115,27 @@ body {
   display: flex;
   align-items: flex-end;
   flex-wrap: nowrap;
-  gap: 0.5rem;
+  gap: 0.35rem;
   overflow-x: auto;
-  padding: 0.25rem 0;
+  padding: 0.15rem 0;
 }
 
 .space {
   border: 2px solid #cbd5e1;
   border-radius: 12px;
-  padding: 0.5rem;
-  min-height: calc(var(--stack-height) + 2.5rem);
+  padding: 0.35rem 0.4rem;
+  min-height: calc(var(--stack-height) + 2rem);
   display: flex;
   flex-direction: column;
   align-items: center;
   background: #fff;
   position: relative;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  flex: 0 0 clamp(112px, 9vw, 150px);
+  flex: 0 0 clamp(86px, 9vw, 120px);
 }
 
 .start-space {
-  min-width: clamp(180px, 18vw, 230px);
+  min-width: clamp(160px, 16vw, 205px);
   align-items: stretch;
 }
 
@@ -164,7 +164,7 @@ body {
   justify-content: flex-end;
   align-items: center;
   gap: var(--chip-gap);
-  margin-top: 1.25rem;
+  margin-top: 0.75rem;
   height: var(--stack-height);
 }
 
@@ -185,13 +185,8 @@ body {
 .exit-slots {
   grid-column: span 2;
   display: grid;
-  grid-template-columns: repeat(5, minmax(18px, 1fr));
-  gap: 0.35rem;
-}
-
-.exit-slot {
-  width: 22px;
-  height: 22px;
+  grid-template-columns: repeat(5, minmax(22px, 1fr));
+  gap: 0.25rem;
 }
 
 .token {
@@ -216,8 +211,17 @@ body {
   transform: translateY(-4px);
 }
 
+.exit-slot {
+  width: 26px;
+  height: 26px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 50%;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+  background: #fff;
+}
+
 .drop-hint {
-  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
   padding: 0.25rem 0.5rem;
   background: #fef3c7;
   color: #92400e;
@@ -228,7 +232,7 @@ body {
 
 .exit-space {
   min-height: calc(var(--stack-height) + 1rem);
-  flex: 0 0 clamp(140px, 14vw, 180px);
+  flex: 0 0 clamp(140px, 13vw, 170px);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -244,6 +248,8 @@ body {
 
 .exit-slot.filled {
   opacity: 1;
+  border-style: solid;
+  border-color: #0f172a33;
 }
 
 .scores {

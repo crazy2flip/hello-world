@@ -468,6 +468,7 @@ export default function App() {
               >
                 <div className="space-label">{idx + 1}</div>
                 <div className="stack">
+                  {highlight && <div className="drop-hint">Drop here</div>}
                   {[...stack].reverse().map((token, displayIndex) => {
                     const actualIndex = stack.length - 1 - displayIndex;
                     const isTopSegment = selection?.space === idx && actualIndex >= stack.length - selection.count;
@@ -494,7 +495,6 @@ export default function App() {
                       />
                     );
                   })}
-                  {highlight && <div className="drop-hint">Drop here</div>}
                 </div>
               </div>
             );
