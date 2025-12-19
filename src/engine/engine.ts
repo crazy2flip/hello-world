@@ -56,25 +56,72 @@ export function canPlace(state: GameState): boolean {
   return dest !== null && state.unplaced[current] > 0 && state.board[dest].length < 5;
 }
 
-export function computeLanding(board: Token[][], from: number, dir: 'forward' | 'backward'): Landing {
-  const delta = dir === 'forward' ? 1 : -1;
-  const target = from + delta;
-  if (dir === 'backward' && target < 0) return null;
-  if (dir === 'forward' && target >= 8) return { type: 'exit' };
-  let pos = target;
-  while (pos >= 0 && pos < 8 && board[pos].length >= 5) {
-    pos += delta;
+type MoveResolution = {
+  board: Token[][];
+  landing: Landing;
+  exited: number;
+};
+
+function resolveMove(board: Token[][], action: MoveAction): MoveResolution | null {
+  const delta = action.dir === 'forward' ? 1 : -1;
+  const target = action.from + delta;
+  if (action.dir === 'backward' && target < 0) return null;
+
+  const working = cloneBoard(board);
+  const sourceStack = working[action.from];
+  if (sourceStack.length < action.count) return null;
+  const moved = sourceStack.splice(sourceStack.length - action.count, action.count);
+
+  let landing: Landing = null;
+  let exited = 0;
+  let placedOutsideSource = 0;
+
+  if (action.dir === 'forward') {
+    let pos = target;
+    while (pos >= 0 && pos < working.length && moved.length > 0) {
+      const stack = working[pos];
+      const capacity = 5 - stack.length;
+      if (capacity > 0) {
+        const take = Math.min(capacity, moved.length);
+        stack.push(...moved.splice(0, take));
+        placedOutsideSource += take;
+        if (!landing) landing = { type: 'space', index: pos };
+      }
+      pos += delta;
+    }
+
+    if (moved.length > 0) {
+      exited = moved.length;
+      moved.length = 0;
+      if (!landing) landing = { type: 'exit' };
+    }
+  } else {
+    let pos = target;
+    while (pos >= 0 && moved.length > 0) {
+      const stack = working[pos];
+      const capacity = 5 - stack.length;
+      if (capacity > 0) {
+        const take = Math.min(capacity, moved.length);
+        stack.push(...moved.splice(0, take));
+        placedOutsideSource += take;
+        if (!landing) landing = { type: 'space', index: pos };
+      }
+      pos += delta;
+    }
+
+    if (moved.length > 0) {
+      working[action.from].push(...moved);
+    }
+
+    if (placedOutsideSource === 0) return null;
   }
-  if (pos < 0) return null;
-  if (pos >= 8) return { type: 'exit' };
-  return { type: 'space', index: pos };
+
+  return { board: working, landing, exited };
 }
 
 export function predictLandingForMove(state: GameState, action: MoveAction): Landing {
-  const preview = cloneBoard(state.board);
-  const source = preview[action.from];
-  preview[action.from] = source.slice(0, source.length - action.count);
-  return computeLanding(preview, action.from, action.dir);
+  const result = resolveMove(state.board, action);
+  return result?.landing ?? null;
 }
 
 export function getMoveOptions(state: GameState): MoveAction[] {
@@ -86,15 +133,8 @@ export function getMoveOptions(state: GameState): MoveAction[] {
     const counts = Array.from({ length: maxCount }, (_, i) => i + 1);
     for (const dir of ['forward', 'backward'] as const) {
       for (const count of counts) {
-        const previewBoard = cloneBoard(state.board);
-        previewBoard[idx] = previewBoard[idx].slice(0, previewBoard[idx].length - count);
-        const landing = computeLanding(previewBoard, idx, dir);
-        if (!landing) continue;
-        if (landing.type === 'space') {
-          const destSize = previewBoard[landing.index].length;
-          if (destSize + count > 5) continue;
-        }
-        moves.push({ type: 'move', from: idx, dir, count });
+        const result = resolveMove(state.board, { type: 'move', from: idx, dir, count });
+        if (result) moves.push({ type: 'move', from: idx, dir, count });
       }
     }
   });
@@ -145,21 +185,12 @@ export function getLegalActions(state: GameState): LegalAction[] {
 function applyMove(state: GameState, action: MoveAction): GameState {
   const { from, dir, count } = action;
   const player = state.players[state.currentIndex].id;
-  const board = cloneBoard(state.board);
-  const sourceStack = board[from];
-  const moved = sourceStack.splice(sourceStack.length - count, count);
+  const resolution = resolveMove(state.board, action);
+  if (!resolution) return state;
 
-  const landing = computeLanding(board, from, dir);
-  if (!landing) return state;
-
-  let message: string | undefined;
+  const board = resolution.board;
   const newExited = { ...state.exited } as Record<PlayerID, number>;
-  if (landing.type === 'exit') {
-    newExited[player] += moved.length;
-    message = `${player} exited ${moved.length} token(s).`;
-  } else {
-    board[landing.index].push(...moved);
-  }
+  newExited[player] += resolution.exited;
 
   const winner = newExited[player] >= 5 ? player : null;
   const nextIndex = winner ? state.currentIndex : nextPlayerIndex(state);
@@ -170,7 +201,7 @@ function applyMove(state: GameState, action: MoveAction): GameState {
     exited: newExited,
     currentIndex: nextIndex,
     winner,
-    message
+    message: resolution.exited > 0 ? `${player} exited ${resolution.exited} token(s).` : state.message
   };
 }
 
