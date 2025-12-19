@@ -10,7 +10,7 @@ import {
   isPinned
 } from './engine/engine';
 import { chooseBotAction } from './engine/bots';
-import { createInitialState, INITIAL_TOKENS } from './engine/state';
+import { createInitialState } from './engine/state';
 import { BubbleAction, GameState, LegalAction, MoveAction, PlayerInfo, Token } from './engine/types';
 
 const palette = ['#ef4444', '#3b82f6', '#10b981', '#f97316', '#a855f7', '#14b8a6', '#e11d48', '#0ea5e9'];
@@ -26,7 +26,10 @@ function defaultPlayers(count = 2): PlayerInfo[] {
 
 function useGame(players: PlayerInfo[]) {
   const [state, setState] = useState<GameState>(() => createInitialState(players));
-  const reset = (nextPlayers: PlayerInfo[] = players) => setState(createInitialState(nextPlayers));
+  useEffect(() => {
+    setState(createInitialState(players));
+  }, [players]);
+  const reset = () => setState(createInitialState(players));
   const dispatch = (action: LegalAction) => setState((prev) => applyAction(prev, action));
   return { state, dispatch, reset };
 }
@@ -45,20 +48,23 @@ function tokenClasses(token: Token, selected: boolean, hover: boolean) {
 }
 
 export default function App() {
-  const [playerConfigs, setPlayerConfigs] = useState<PlayerInfo[]>(defaultPlayers());
-  const { state, dispatch, reset } = useGame(playerConfigs);
+  const [setupPlayers, setSetupPlayers] = useState<PlayerInfo[]>(defaultPlayers());
+  const [activePlayers, setActivePlayers] = useState<PlayerInfo[]>(defaultPlayers());
+  const [setupMode, setSetupMode] = useState(true);
+  const { state, dispatch, reset } = useGame(activePlayers);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hoverSelection, setHoverSelection] = useState<Selection | null>(null);
   const [bubbleMode, setBubbleMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  const started = !setupMode;
   const currentPlayer = state.players[state.currentIndex];
   const moveOptions = useMemo(() => getMoveOptions(state), [state]);
   const bubbleOptions = useMemo(() => getBubbleOptions(state), [state]);
   const legalActions = useMemo(() => getLegalActions(state), [state]);
   const placementTarget = placementDestination(state);
-  const canPlaceToken = legalActions.some((a) => a.type === 'place');
-  const bubbleAllowed = bubbleOptions.length > 0 && moveOptions.length === 0 && !canPlaceToken;
+  const canPlaceToken = started && legalActions.some((a) => a.type === 'place');
+  const bubbleAllowed = started && bubbleOptions.length > 0 && moveOptions.length === 0 && !canPlaceToken;
 
   useEffect(() => {
     if (toast) {
@@ -70,18 +76,28 @@ export default function App() {
   useEffect(() => {
     setSelection(null);
     setBubbleMode(false);
+    setHoverSelection(null);
   }, [state.currentIndex]);
 
   useEffect(() => {
+    if (setupMode) {
+      setSelection(null);
+      setBubbleMode(false);
+      setHoverSelection(null);
+    }
+  }, [setupMode]);
+
+  useEffect(() => {
     const player = currentPlayer;
-    if (!player || player.kind !== 'bot' || state.winner) return;
+    if (!started || !player || player.kind !== 'bot' || state.winner) return;
     const action = chooseBotAction(state, player.difficulty || 'easy');
     if (!action) return;
     const timer = setTimeout(() => dispatch(action), 600);
     return () => clearTimeout(timer);
-  }, [state, currentPlayer, dispatch]);
+  }, [state, currentPlayer, dispatch, started]);
 
   const handleTokenSelect = (space: number, tokenIndex: number) => {
+    if (!started || state.winner) return;
     const stack = state.board[space];
     const playerId = currentPlayer.id;
     const topCount = topContiguousCount(stack, playerId);
@@ -95,7 +111,7 @@ export default function App() {
   };
 
   const handleBubbleClick = (space: number, tokenIndex: number) => {
-    if (!bubbleAllowed) return;
+    if (!started || !bubbleAllowed) return;
     const action: BubbleAction = { type: 'bubble', space, tokenIndex };
     const isLegal = legalActions.some((a) => a.type === 'bubble' && a.space === space && a.tokenIndex === tokenIndex);
     if (!isLegal) return;
@@ -111,7 +127,7 @@ export default function App() {
   }, [selection, moveOptions, state]);
 
   const handleDestinationClick = (target: number | 'exit') => {
-    if (!selection) return;
+    if (!selection || !started) return;
     const match = destinationOptions.find((opt) =>
       opt.landing && (opt.landing.type === 'exit' ? target === 'exit' : opt.landing.index === target)
     );
@@ -124,15 +140,19 @@ export default function App() {
   };
 
   const setPlayerKind = (idx: number, kind: PlayerInfo['kind']) => {
-    setPlayerConfigs((prev) => prev.map((p, i) => (i === idx ? { ...p, kind } : p)));
+    setSetupPlayers((prev) => prev.map((p, i) => (i === idx ? { ...p, kind } : p)));
   };
 
   const setDifficulty = (idx: number, difficulty: NonNullable<PlayerInfo['difficulty']>) => {
-    setPlayerConfigs((prev) => prev.map((p, i) => (i === idx ? { ...p, difficulty } : p)));
+    setSetupPlayers((prev) => prev.map((p, i) => (i === idx ? { ...p, difficulty } : p)));
+  };
+
+  const setPlayerName = (idx: number, name: string) => {
+    setSetupPlayers((prev) => prev.map((p, i) => (i === idx ? { ...p, name } : p)));
   };
 
   const addPlayer = () => {
-    setPlayerConfigs((prev) => {
+    setSetupPlayers((prev) => {
       if (prev.length >= 8) return prev;
       const nextIdx = prev.length;
       return [
@@ -148,17 +168,39 @@ export default function App() {
   };
 
   const removePlayer = (idx: number) => {
-    setPlayerConfigs((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== idx)));
+    setSetupPlayers((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== idx)));
   };
 
-  const restartWithConfig = () => {
+  const startGame = () => {
+    const sanitized = setupPlayers.map((p, idx) => ({ ...p, name: p.name.trim() || `Player ${idx + 1}` }));
+    setActivePlayers(sanitized);
     setSelection(null);
     setBubbleMode(false);
-    reset(playerConfigs);
+    setToast(null);
+    setSetupMode(false);
+  };
+
+  const restartWithActive = () => {
+    setSelection(null);
+    setBubbleMode(false);
+    setToast(null);
+    reset();
+  };
+
+  const backToSetup = () => {
+    setSetupPlayers(activePlayers);
+    setSelection(null);
+    setBubbleMode(false);
+    setToast(null);
+    setSetupMode(true);
   };
 
   const selectionInfo = selection ? `${selection.count} token(s) from space ${selection.space + 1}` : 'None';
-  const info = state.winner ? `${state.winner} wins!` : `${currentPlayer?.name ?? '—'} to act`;
+  const info = !started
+    ? 'Use the start menu to configure players, then begin.'
+    : state.winner
+      ? `${state.winner} wins!`
+      : `${currentPlayer?.name ?? '—'} to act`;
 
   return (
     <div className="app">
@@ -168,61 +210,91 @@ export default function App() {
           <div className="legend">Stacks render bottom → top; topmost tokens are clickable.</div>
         </div>
         <div className="header-actions">
-          <button onClick={restartWithConfig}>Restart</button>
+          {started ? (
+            <>
+              <button onClick={restartWithActive}>Restart</button>
+              <button onClick={backToSetup}>Change lineup</button>
+            </>
+          ) : (
+            <button onClick={startGame} disabled={setupPlayers.length < 2}>Start game</button>
+          )}
         </div>
       </div>
 
       <section className="setup">
         <h3>Local Players & Bots (2–8)</h3>
-        <div className="player-grid">
-          {playerConfigs.map((p, idx) => (
-            <div key={p.id} className="player-card" style={{ borderColor: p.color }}>
-              <div className="player-row">
-                <span className="swatch" style={{ background: p.color }} />
-                <strong>{p.name}</strong>
-                <button onClick={() => removePlayer(idx)} disabled={playerConfigs.length <= 2}>
-                  Remove
+        {setupMode ? (
+          <>
+            <div className="player-grid">
+              {setupPlayers.map((p, idx) => (
+                <div key={p.id} className="player-card" style={{ borderColor: p.color }}>
+                  <div className="player-row">
+                    <span className="swatch" style={{ background: p.color }} />
+                    <input
+                      className="name-input"
+                      value={p.name}
+                      onChange={(e) => setPlayerName(idx, e.target.value)}
+                      placeholder={`Player ${idx + 1}`}
+                    />
+                    <button onClick={() => removePlayer(idx)} disabled={setupPlayers.length <= 2}>
+                      Remove
+                    </button>
+                  </div>
+                  <div className="player-row">
+                    <label>
+                      Type:
+                      <select value={p.kind} onChange={(e) => setPlayerKind(idx, e.target.value as PlayerInfo['kind'])}>
+                        <option value="human">Human</option>
+                        <option value="bot">Bot</option>
+                      </select>
+                    </label>
+                    {p.kind === 'bot' && (
+                      <label>
+                        Difficulty:
+                        <select
+                          value={p.difficulty ?? 'easy'}
+                          onChange={(e) => setDifficulty(idx, e.target.value as NonNullable<PlayerInfo['difficulty']>)}
+                        >
+                          <option value="easy">Easy</option>
+                          <option value="medium">Medium</option>
+                          <option value="hard">Hard</option>
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {setupPlayers.length < 8 && (
+                <button className="add-player" onClick={addPlayer}>
+                  + Add player
                 </button>
-              </div>
-              <div className="player-row">
-                <label>
-                  Type:
-                  <select value={p.kind} onChange={(e) => setPlayerKind(idx, e.target.value as PlayerInfo['kind'])}>
-                    <option value="human">Human</option>
-                    <option value="bot">Bot</option>
-                  </select>
-                </label>
-                {p.kind === 'bot' && (
-                  <label>
-                    Difficulty:
-                    <select
-                      value={p.difficulty ?? 'easy'}
-                      onChange={(e) => setDifficulty(idx, e.target.value as NonNullable<PlayerInfo['difficulty']>)}
-                    >
-                      <option value="easy">Easy</option>
-                      <option value="medium">Medium</option>
-                      <option value="hard">Hard</option>
-                    </select>
-                  </label>
-                )}
-              </div>
-              <div className="player-row">Unplaced: {state.unplaced[p.id] ?? INITIAL_TOKENS}</div>
-              <div className="player-row">Exited: {state.exited[p.id] ?? 0}</div>
+              )}
             </div>
-          ))}
-          {playerConfigs.length < 8 && (
-            <button className="add-player" onClick={addPlayer}>
-              + Add player
-            </button>
-          )}
-        </div>
+            <div className="setup-actions">
+              <div>Names are editable. Starting a game locks the lineup until you return here.</div>
+              <button onClick={startGame} disabled={setupPlayers.length < 2}>Start game</button>
+            </div>
+          </>
+        ) : (
+          <div className="player-grid read-only">
+            {activePlayers.map((p) => (
+              <div key={p.id} className="player-card" style={{ borderColor: p.color }}>
+                <div className="player-row">
+                  <span className="swatch" style={{ background: p.color }} />
+                  <strong>{p.name}</strong>
+                  <span className="pill">{p.kind === 'bot' ? `${p.difficulty ?? 'easy'} bot` : 'Human'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="message">{info}</div>
       {state.message && <div className="message subtle">{state.message}</div>}
       {toast && <div className="message warning">{toast}</div>}
 
-      <div className="board">
+      <div className={`board ${!started ? 'disabled' : ''}`}>
         {state.board.map((stack, idx) => {
           const topCount = topContiguousCount(stack, currentPlayer.id);
           const topStart = stack.length - topCount;
@@ -231,6 +303,7 @@ export default function App() {
               key={idx}
               className={`space ${destinationOptions.some((opt) => opt.landing?.type === 'space' && opt.landing.index === idx) ? 'highlight' : ''}`}
               onClick={() => {
+                if (!started) return;
                 const exitOption = destinationOptions.find((opt) => opt.landing?.type === 'exit');
                 const spaceOption = destinationOptions.find((opt) => opt.landing?.type === 'space' && opt.landing.index === idx);
                 if (spaceOption) {
@@ -242,37 +315,35 @@ export default function App() {
             >
               <div className="space-label">{idx + 1}</div>
               <div className="stack">
-                {stack
-                  .map((token, tIdx) => ({ token, tIdx }))
-                  .reverse()
-                  .map(({ token, tIdx }) => {
-                    const actualIndex = stack.length - 1 - tIdx;
-                    const isTopSegment = selection?.space === idx && actualIndex >= stack.length - selection.count;
-                    const hoverSegment = hoverSelection?.space === idx && actualIndex >= stack.length - hoverSelection.count;
-                    const selectable = actualIndex >= topStart && token.player === currentPlayer.id && !bubbleMode;
-                    const bubbleSelectable = bubbleAllowed && bubbleMode && token.player === currentPlayer.id && isPinned(stack, actualIndex);
-                    return (
-                      <div
-                        key={tIdx}
-                        className={tokenClasses(token, !!isTopSegment, !!hoverSegment)}
-                        style={{ background: state.players.find((p) => p.id === token.player)?.color }}
-                        onMouseEnter={() => {
-                          if (selectable) setHoverSelection({ space: idx, count: stack.length - actualIndex });
-                        }}
-                        onMouseLeave={() => setHoverSelection(null)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (bubbleSelectable) {
-                            handleBubbleClick(idx, actualIndex);
-                          } else if (selectable) {
-                            handleTokenSelect(idx, actualIndex);
-                          }
-                        }}
-                      >
-                        {token.player}
-                      </div>
-                    );
-                  })}
+                {stack.map((token, actualIndex) => {
+                  const isTopSegment = selection?.space === idx && actualIndex >= stack.length - selection.count;
+                  const hoverSegment = hoverSelection?.space === idx && actualIndex >= stack.length - hoverSelection.count;
+                  const selectable =
+                    started && actualIndex >= topStart && token.player === currentPlayer.id && !bubbleMode && !state.winner;
+                  const bubbleSelectable =
+                    bubbleAllowed && bubbleMode && token.player === currentPlayer.id && isPinned(stack, actualIndex);
+                  return (
+                    <div
+                      key={actualIndex}
+                      className={tokenClasses(token, !!isTopSegment, !!hoverSegment)}
+                      style={{ background: state.players.find((p) => p.id === token.player)?.color }}
+                      onMouseEnter={() => {
+                        if (selectable) setHoverSelection({ space: idx, count: stack.length - actualIndex });
+                      }}
+                      onMouseLeave={() => setHoverSelection(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (bubbleSelectable) {
+                          handleBubbleClick(idx, actualIndex);
+                        } else if (selectable) {
+                          handleTokenSelect(idx, actualIndex);
+                        }
+                      }}
+                    >
+                      {token.player}
+                    </div>
+                  );
+                })}
                 {destinationOptions.some((opt) => opt.landing?.type === 'exit' && opt.action.from === idx) && (
                   <div className="exit-indicator" onClick={() => handleDestinationClick('exit')}>
                     Exit →

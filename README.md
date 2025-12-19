@@ -27,6 +27,7 @@ npm test
 ```
 
 ## How to play in this preview
+- Start at the setup menu: choose 2–8 players (human or bot), edit player names, and click **Start game**. The lineup locks until you return to setup.
 - Tap/click a token you control; if multiple of your tokens are stacked on top, tapping deeper selects that token **and all above it**.
 - All legal destination spaces (forward or backward) highlight automatically; tap a highlight to move. Sliding resolves automatically. An "Exit" chip appears when moving off space 8 is legal.
 - **Place** drops a new token into the lowest legal space (obeying the special slot rules) and is required if all your on-board tokens are pinned while an empty space exists.
