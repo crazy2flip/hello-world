@@ -249,6 +249,14 @@ export default function App() {
     e.dataTransfer.effectAllowed = 'move';
   };
 
+  const handleReserveClick = () => {
+    if (!canPlaceToken) {
+      setToast('Placement not available');
+      return;
+    }
+    dispatch({ type: 'place' });
+  };
+
   const tryBubbleDrop = (space: number, payload: DragPayload) => {
     if (!bubbleAllowed || payload.kind !== 'bubble' || payload.space === undefined || payload.tokenIndex === undefined)
       return false;
@@ -410,6 +418,10 @@ export default function App() {
                         style={{ background: p.color }}
                         draggable={started && p.id === currentPlayer.id && canPlaceToken}
                         onDragStart={p.id === currentPlayer.id ? handleDragStartReserve : undefined}
+                        onClick={p.id === currentPlayer.id ? handleReserveClick : undefined}
+                        role="button"
+                        aria-label="Place token"
+                        tabIndex={0}
                       />
                     ))}
                   </div>
@@ -440,12 +452,18 @@ export default function App() {
                   }}
                   onDragOver={(e) => {
                     const payload = parseDrag(e);
-                    if (!payload) return;
-                    if (payload.kind === 'place' && placementTarget === idx && canPlaceToken) e.preventDefault();
-                    if (payload.kind === 'move') {
+                    if (
+                      payload?.kind === 'place'
+                        ? placementTarget === idx && canPlaceToken
+                        : payload?.kind === 'move' || (payload?.kind === 'bubble' && bubbleAllowed && payload.space === idx)
+                    ) {
+                      e.preventDefault();
+                      return;
+                    }
+                    // Allow reserve drag payloads even when getData is unavailable in dragover events
+                    if (!payload && started) {
                       e.preventDefault();
                     }
-                    if (payload.kind === 'bubble' && bubbleAllowed && payload.space === idx) e.preventDefault();
                   }}
                   onDrop={(e) => handleSpaceDrop(idx, e)}
                 >
