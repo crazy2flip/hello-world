@@ -76,6 +76,7 @@ describe('pinning and exiting', () => {
     const base = withState({
       board: [
         [token('BLUE')],
+        [token('RED')],
         [token('BLUE')],
         [],
         [],
@@ -86,10 +87,10 @@ describe('pinning and exiting', () => {
       ],
       currentIndex: 0
     });
-    const forward = applyAction(base, { type: 'move', from: 2, dir: 'forward', count: 1 });
-    expect(forward.board[3][forward.board[3].length - 1].player).toBe('RED');
-    const backward = applyAction(base, { type: 'move', from: 2, dir: 'backward', count: 1 });
-    expect(backward.board[1][backward.board[1].length - 1].player).toBe('RED');
+    const forward = applyAction(base, { type: 'move', from: 1, dir: 'forward', count: 1 });
+    expect(forward.board[2][forward.board[2].length - 1].player).toBe('RED');
+    const backward = applyAction(base, { type: 'move', from: 1, dir: 'backward', count: 1 });
+    expect(backward.board[0][backward.board[0].length - 1].player).toBe('RED');
   });
 
   it('exits from space 8 and wins at five', () => {
@@ -204,7 +205,7 @@ describe('placement rules', () => {
 
   it('enforces forced placement when no moves but empty exists', () => {
     const state = withState({
-      board: [[token('RED')], [token('BLUE')], [], [], [], [], [], []],
+      board: [[token('RED'), token('BLUE')], [token('BLUE')], [], [], [], [], [], []],
       currentIndex: 0,
       unplaced: { RED: 7, BLUE: 7 }
     });
@@ -217,7 +218,7 @@ describe('bubble up', () => {
   it('only available when no moves and no placement and moves token to top', () => {
     const state = withState({
       board: [
-        [token('BLUE'), token('RED')],
+        [token('RED'), token('BLUE')],
         [],
         [],
         [],

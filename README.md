@@ -1,6 +1,6 @@
 # STACKERS: Five & Slide
 
-A Vite + React + TypeScript implementation of the abstract game. The rules engine is pure and covered by Vitest; the UI supports tap-first movement, multi-segment selection, and configurable local multiplayer with bots.
+A Vite + React + TypeScript implementation of the abstract game. The rules engine is pure and covered by Vitest; the UI supports tap-or-drag movement, multi-segment selection, and configurable local multiplayer with bots.
 
 ## Getting started
 
@@ -28,10 +28,10 @@ npm test
 
 ## How to play in this preview
 - Start at the setup menu: choose 2–8 players (human or bot), edit player names, and click **Start game**. The lineup locks until you return to setup.
-- Tap/click a token you control; if multiple of your tokens are stacked on top, tapping deeper selects that token **and all above it**.
-- All legal destination spaces (forward or backward) highlight automatically; tap a highlight to move. Sliding resolves automatically. An "Exit" chip appears when moving off space 8 is legal.
-- **Place** drops a new token into the lowest legal space (obeying the special slot rules) and is required if all your on-board tokens are pinned while an empty space exists.
-- **Bubble Up** appears only when you have no legal moves and cannot place; enter bubble mode then tap one of your pinned tokens to lift it.
+- Tap/click a token you control or drag it; if multiple of your tokens are stacked on top, tapping deeper selects that token **and all above it**.
+- All legal destination spaces (forward or backward) highlight automatically; tap or drop onto a highlight to move. Sliding resolves automatically. Dropping onto the Exit panel finishes an exiting move when available.
+- To **place**, drag from your Start Zone (unplaced chips) to the glowing lowest empty space. Placement is forced when all your on-board tokens are pinned and an empty space exists.
+- If you have no legal moves and cannot place, you may drag one of your pinned tokens upward in its stack to bubble it to the top.
 - Configure 2–8 players (humans or bots). Bots auto-play with a brief delay.
 
 ## Rules summary (implemented in engine)

@@ -1,17 +1,31 @@
-import { applyAction, getLegalActions, predictLandingForMove } from './engine';
+import { applyAction, getLegalActions, getMoveOptions, isPinned, predictLandingForMove } from './engine';
 import { GameState, Landing, LegalAction, MoveAction, PlayerID } from './types';
 
 function landingPriority(landing: Landing): number {
   if (!landing) return -10;
-  if (landing.type === 'exit') return 5;
+  if (landing.type === 'exit') return 8;
   return 0;
 }
 
+function opponentPressure(state: GameState, player: PlayerID): number {
+  let pinnedOpponents = 0;
+  state.board.forEach((stack) => {
+    stack.forEach((token, idx) => {
+      if (token.player !== player && isPinned(stack, idx)) pinnedOpponents++;
+    });
+  });
+  const oppExitMax = Math.max(
+    ...state.players.filter((p) => p.id !== player).map((p) => state.exited[p.id]),
+    0
+  );
+  return pinnedOpponents * 1.5 - oppExitMax * 4;
+}
+
 function evaluateState(state: GameState, player: PlayerID): number {
-  const exitedScore = state.exited[player] * 5;
+  const exitedScore = state.exited[player] * 6;
   const mobility = getLegalActions(state).length;
   const boardPresence = state.board.reduce((sum, stack) => sum + stack.filter((t) => t.player === player).length, 0);
-  return exitedScore + mobility + boardPresence * 0.5;
+  return exitedScore + mobility + boardPresence * 0.5 + opponentPressure(state, player);
 }
 
 function pickRandom<T>(arr: T[]): T | null {
@@ -34,6 +48,15 @@ function chooseMedium(state: GameState, player: PlayerID): LegalAction | null {
     let score = landingPriority(landing);
     const next = applyAction(state, action);
     score += evaluateState(next, player);
+    // prefer moves that pin someone
+    if (action.type === 'move') {
+      const moveLanding = predictLandingForMove(state, action as MoveAction);
+      if (moveLanding && moveLanding.type === 'space') {
+        const destStack = [...state.board[moveLanding.index], ...state.board[action.from].slice(-action.count)];
+        const pinnedOpp = destStack.filter((t, idx) => t.player !== player && isPinned(destStack, idx)).length;
+        score += pinnedOpp * 2;
+      }
+    }
     if (!best || score > best.score) {
       best = { action, score };
     }
@@ -52,15 +75,34 @@ function chooseHard(state: GameState, player: PlayerID): LegalAction | null {
     if (opponent) {
       const oppLegal = getLegalActions(next);
       if (oppLegal.length > 0) {
-        const oppBest = oppLegal.reduce((acc, act) => {
-          const after = applyAction(next, act);
-          const score = evaluateState(after, opponent);
-          return score > acc.score ? { score, act } : acc;
-        }, { score: -Infinity, act: oppLegal[0] });
+        const oppBest = oppLegal.reduce(
+          (acc, act) => {
+            const after = applyAction(next, act);
+            const score = evaluateState(after, opponent);
+            return score > acc.score ? { score, act } : acc;
+          },
+          { score: -Infinity, act: oppLegal[0] }
+        );
         opponentScore = oppBest.score;
       }
     }
-    const selfScore = evaluateState(next, player);
+
+    // Depth-2 peek: consider our follow-up after opponent best reply
+    let followUpScore = 0;
+    if (opponent) {
+      const oppNext = applyAction(next, getLegalActions(next)[0] ?? action);
+      const ourReturnMoves = getMoveOptions(oppNext).filter((m) => oppNext.players[oppNext.currentIndex]?.id === player);
+      if (ourReturnMoves.length > 0) {
+        const bestReturn = ourReturnMoves.reduce((acc, m) => {
+          const after = applyAction(oppNext, m);
+          const score = evaluateState(after, player);
+          return score > acc.score ? { score, m } : acc;
+        }, { score: -Infinity, m: ourReturnMoves[0] });
+        followUpScore = bestReturn.score * 0.2;
+      }
+    }
+
+    const selfScore = evaluateState(next, player) + followUpScore;
     const combined = selfScore - opponentScore * 0.6;
     if (!best || combined > best.score) {
       best = { action, score: combined };

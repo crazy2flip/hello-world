@@ -14,7 +14,7 @@ body {
 
 .app {
   padding: clamp(1rem, 2vw, 1.5rem);
-  max-width: 1300px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -30,16 +30,89 @@ body {
   gap: 0.5rem;
 }
 
-.board {
+.play-area {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: 280px minmax(520px, 1fr) 240px;
   gap: 0.75rem;
   margin: 1rem 0;
+  align-items: flex-start;
 }
 
-.board.disabled {
+.play-area.disabled {
   pointer-events: none;
   opacity: 0.75;
+}
+
+.start-zone,
+.exit-space,
+.control-card,
+.setup {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 0.75rem;
+}
+
+.start-zone h4,
+.exit-space h4 {
+  margin: 0 0 0.35rem;
+}
+
+.start-info {
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.reserve-list {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.reserve-row {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.reserve-chips {
+  grid-column: span 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.reserve-name {
+  font-weight: 600;
+}
+
+.token.reserve {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #0f172a33;
+  opacity: 0.9;
+}
+
+.token.reserve.draggable {
+  outline: 2px dashed #a5b4fc;
+}
+
+.placement-callout {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  background: #eef2ff;
+  border-radius: 8px;
+  border: 1px solid #c7d2fe;
+  font-weight: 600;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 0.75rem;
 }
 
 .space {
@@ -55,9 +128,15 @@ body {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.space.highlight {
+.space.highlight,
+.exit-space.highlight {
   border-color: #a5b4fc;
   box-shadow: 0 0 0 3px #e0e7ff;
+}
+
+.space.placement {
+  border-color: #34d399;
+  box-shadow: 0 0 0 3px #d1fae5;
 }
 
 .space-label {
@@ -70,9 +149,9 @@ body {
 
 .stack {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   justify-content: flex-start;
-  width: 100%;
+  align-items: center;
   gap: var(--chip-gap);
   margin-top: 1.25rem;
   height: var(--stack-height);
@@ -85,11 +164,6 @@ body {
   margin: 0 auto;
   border: 2px solid #0f172a33;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #0f172a;
-  font-weight: bold;
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
   flex-shrink: 0;
@@ -105,11 +179,7 @@ body {
   transform: translateY(-4px);
 }
 
-.token.player-token {
-  opacity: 0.95;
-}
-
-.exit-indicator {
+.drop-hint {
   margin-top: 0.35rem;
   padding: 0.25rem 0.5rem;
   background: #fef3c7;
@@ -117,7 +187,29 @@ body {
   border-radius: 8px;
   font-weight: 700;
   border: 1px solid #fcd34d;
-  cursor: pointer;
+}
+
+.exit-space {
+  min-height: calc(var(--stack-height) + 1rem);
+}
+
+.scores {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.score-pill {
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-weight: 700;
 }
 
 .controls {
@@ -127,10 +219,7 @@ body {
 }
 
 .control-card {
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  padding: 0.75rem;
-  background: #fff;
+  margin-top: 0.25rem;
 }
 
 button {
@@ -145,12 +234,6 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
-}
-
-.selection-info {
-  margin-top: 0.5rem;
-  font-size: 0.95rem;
-  color: #0f172a;
 }
 
 .message {
@@ -172,6 +255,12 @@ button:disabled {
   border-color: #fecaca;
 }
 
+.message.celebration {
+  background: #ecfeff;
+  border-color: #67e8f9;
+  font-weight: 700;
+}
+
 .legend {
   font-size: 0.9rem;
   color: #334155;
@@ -179,10 +268,6 @@ button:disabled {
 
 .setup {
   margin-top: 1rem;
-  padding: 0.75rem;
-  background: #fff;
-  border-radius: 10px;
-  border: 1px solid #cbd5e1;
 }
 
 .player-grid {
@@ -247,9 +332,36 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.info-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.celebration-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+@media (max-width: 1024px) {
+  .play-area {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
   .setup-actions {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .board {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  }
+
+  :root {
+    --chip-size: clamp(32px, 9vw, 64px);
   }
 }
