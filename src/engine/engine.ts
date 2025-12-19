@@ -1,5 +1,5 @@
-import { GameState, LegalAction, MoveAction, Player, Token } from './types';
-import { oppositePlayer } from './state';
+import { GameState, Landing, LegalAction, MoveAction, PlayerID, Token } from './types';
+import { nextPlayerIndex } from './state';
 
 function cloneBoard(board: Token[][]): Token[][] {
   return board.map((stack) => [...stack]);
@@ -9,7 +9,7 @@ export function isPinned(stack: Token[], index: number): boolean {
   return index < stack.length - 1;
 }
 
-export function topContiguousCount(stack: Token[], player: Player): number {
+export function topContiguousCount(stack: Token[], player: PlayerID): number {
   let count = 0;
   for (let i = stack.length - 1; i >= 0; i--) {
     if (stack[i].player === player) {
@@ -52,30 +52,34 @@ export function placementDestination(state: GameState): number | null {
 
 export function canPlace(state: GameState): boolean {
   const dest = placementDestination(state);
-  return dest !== null && state.unplaced[state.currentPlayer] > 0 && state.board[dest].length < 5;
+  const current = state.players[state.currentIndex].id;
+  return dest !== null && state.unplaced[current] > 0 && state.board[dest].length < 5;
 }
 
-function computeLanding(
-  board: Token[][],
-  from: number,
-  dir: 'forward' | 'backward'
-): { type: 'space'; index: number } | { type: 'exit' } | null {
+export function computeLanding(board: Token[][], from: number, dir: 'forward' | 'backward'): Landing {
   const delta = dir === 'forward' ? 1 : -1;
   const target = from + delta;
-  if (target < 0) return null;
+  if (dir === 'backward' && target < 0) return null;
+  if (dir === 'forward' && target >= 8) return { type: 'exit' };
   let pos = target;
-  while (pos < 8 && board[pos].length >= 5) {
-    pos += 1;
+  while (pos >= 0 && pos < 8 && board[pos].length >= 5) {
+    pos += delta;
   }
-  if (pos >= 8) {
-    return { type: 'exit' };
-  }
+  if (pos < 0) return null;
+  if (pos >= 8) return { type: 'exit' };
   return { type: 'space', index: pos };
+}
+
+export function predictLandingForMove(state: GameState, action: MoveAction): Landing {
+  const preview = cloneBoard(state.board);
+  const source = preview[action.from];
+  preview[action.from] = source.slice(0, source.length - action.count);
+  return computeLanding(preview, action.from, action.dir);
 }
 
 export function getMoveOptions(state: GameState): MoveAction[] {
   const moves: MoveAction[] = [];
-  const player = state.currentPlayer;
+  const player = state.players[state.currentIndex].id;
   state.board.forEach((stack, idx) => {
     const maxCount = topContiguousCount(stack, player);
     if (maxCount === 0) return;
@@ -99,7 +103,7 @@ export function getMoveOptions(state: GameState): MoveAction[] {
 
 export function getBubbleOptions(state: GameState): { space: number; tokenIndex: number }[] {
   const options: { space: number; tokenIndex: number }[] = [];
-  const player = state.currentPlayer;
+  const player = state.players[state.currentIndex].id;
   state.board.forEach((stack, space) => {
     stack.forEach((token, idx) => {
       if (token.player === player && isPinned(stack, idx)) {
@@ -114,7 +118,8 @@ export function getLegalActions(state: GameState): LegalAction[] {
   if (state.winner) return [];
   const moveOptions = getMoveOptions(state);
   const dest = placementDestination(state);
-  const placementLegal = dest !== null && state.unplaced[state.currentPlayer] > 0 && state.board[dest].length < 5;
+  const current = state.players[state.currentIndex].id;
+  const placementLegal = dest !== null && state.unplaced[current] > 0 && state.board[dest].length < 5;
 
   const legal: LegalAction[] = [];
   if (moveOptions.length > 0) {
@@ -139,7 +144,7 @@ export function getLegalActions(state: GameState): LegalAction[] {
 
 function applyMove(state: GameState, action: MoveAction): GameState {
   const { from, dir, count } = action;
-  const player = state.currentPlayer;
+  const player = state.players[state.currentIndex].id;
   const board = cloneBoard(state.board);
   const sourceStack = board[from];
   const moved = sourceStack.splice(sourceStack.length - count, count);
@@ -148,7 +153,7 @@ function applyMove(state: GameState, action: MoveAction): GameState {
   if (!landing) return state;
 
   let message: string | undefined;
-  const newExited = { ...state.exited } as Record<Player, number>;
+  const newExited = { ...state.exited } as Record<PlayerID, number>;
   if (landing.type === 'exit') {
     newExited[player] += moved.length;
     message = `${player} exited ${moved.length} token(s).`;
@@ -157,13 +162,13 @@ function applyMove(state: GameState, action: MoveAction): GameState {
   }
 
   const winner = newExited[player] >= 5 ? player : null;
-  const nextPlayer = winner ? state.currentPlayer : oppositePlayer(state.currentPlayer);
+  const nextIndex = winner ? state.currentIndex : nextPlayerIndex(state);
 
   return {
     ...state,
     board,
     exited: newExited,
-    currentPlayer: nextPlayer,
+    currentIndex: nextIndex,
     winner,
     message
   };
@@ -171,18 +176,19 @@ function applyMove(state: GameState, action: MoveAction): GameState {
 
 function applyPlace(state: GameState): GameState {
   const dest = placementDestination(state);
-  if (dest === null || state.unplaced[state.currentPlayer] <= 0 || state.board[dest].length >= 5) {
+  const player = state.players[state.currentIndex].id;
+  if (dest === null || state.unplaced[player] <= 0 || state.board[dest].length >= 5) {
     return state;
   }
   const board = cloneBoard(state.board);
-  board[dest].push({ player: state.currentPlayer });
-  const unplaced = { ...state.unplaced } as Record<Player, number>;
-  unplaced[state.currentPlayer] -= 1;
+  board[dest].push({ player });
+  const unplaced = { ...state.unplaced } as Record<PlayerID, number>;
+  unplaced[player] -= 1;
   return {
     ...state,
     board,
     unplaced,
-    currentPlayer: oppositePlayer(state.currentPlayer),
+    currentIndex: nextPlayerIndex(state),
     message: `Placed on space ${dest + 1}`
   };
 }
@@ -195,7 +201,7 @@ function applyBubble(state: GameState, space: number, tokenIndex: number): GameS
   return {
     ...state,
     board,
-    currentPlayer: oppositePlayer(state.currentPlayer),
+    currentIndex: nextPlayerIndex(state),
     message: 'Bubbled up'
   };
 }

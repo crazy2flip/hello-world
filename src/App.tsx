@@ -1,201 +1,316 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   applyAction,
-  canPlace,
   getBubbleOptions,
   getLegalActions,
   getMoveOptions,
   placementDestination,
+  predictLandingForMove,
   topContiguousCount,
   isPinned
 } from './engine/engine';
-import { createInitialState } from './engine/state';
-import { BubbleAction, GameState, MoveAction, Player } from './engine/types';
+import { chooseBotAction } from './engine/bots';
+import { createInitialState, INITIAL_TOKENS } from './engine/state';
+import { BubbleAction, GameState, LegalAction, MoveAction, PlayerInfo, Token } from './engine/types';
 
-function tokenClass(player: Player) {
-  return player === 'RED' ? 'token red' : 'token blue';
+const palette = ['#ef4444', '#3b82f6', '#10b981', '#f97316', '#a855f7', '#14b8a6', '#e11d48', '#0ea5e9'];
+
+function defaultPlayers(count = 2): PlayerInfo[] {
+  return Array.from({ length: count }).map((_, idx) => ({
+    id: idx === 0 ? 'RED' : idx === 1 ? 'BLUE' : `P${idx + 1}`,
+    name: idx === 0 ? 'Red' : idx === 1 ? 'Blue' : `Player ${idx + 1}`,
+    color: palette[idx % palette.length],
+    kind: 'human'
+  }));
 }
 
-function formatPlayer(player: Player) {
-  return player === 'RED' ? 'Red' : 'Blue';
+function useGame(players: PlayerInfo[]) {
+  const [state, setState] = useState<GameState>(() => createInitialState(players));
+  const reset = (nextPlayers: PlayerInfo[] = players) => setState(createInitialState(nextPlayers));
+  const dispatch = (action: LegalAction) => setState((prev) => applyAction(prev, action));
+  return { state, dispatch, reset };
 }
 
-function useGameState() {
-  const [state, setState] = useState<GameState>(createInitialState());
-  const reset = () => setState(createInitialState());
-  const dispatch = (action: BubbleAction | MoveAction | { type: 'place' }) => {
-    setState((prev) => applyAction(prev, action));
-  };
-  return { state, reset, dispatch };
+interface Selection {
+  space: number;
+  count: number;
+}
+
+function tokenClasses(token: Token, selected: boolean, hover: boolean) {
+  const classes = ['token'];
+  if (selected) classes.push('selected');
+  if (hover) classes.push('hovered');
+  classes.push('player-token');
+  return classes.join(' ');
 }
 
 export default function App() {
-  const { state, reset, dispatch } = useGameState();
-  const [selectedSpace, setSelectedSpace] = useState<number | null>(null);
-  const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
-  const [segmentSize, setSegmentSize] = useState(1);
+  const [playerConfigs, setPlayerConfigs] = useState<PlayerInfo[]>(defaultPlayers());
+  const { state, dispatch, reset } = useGame(playerConfigs);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [hoverSelection, setHoverSelection] = useState<Selection | null>(null);
   const [bubbleMode, setBubbleMode] = useState(false);
-  const legalActions = useMemo(() => getLegalActions(state), [state]);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const currentPlayer = state.players[state.currentIndex];
   const moveOptions = useMemo(() => getMoveOptions(state), [state]);
   const bubbleOptions = useMemo(() => getBubbleOptions(state), [state]);
-  const placeLegal = canPlace(state);
-  const bubbleAllowed = bubbleOptions.length > 0 && moveOptions.length === 0 && !placeLegal;
+  const legalActions = useMemo(() => getLegalActions(state), [state]);
   const placementTarget = placementDestination(state);
-  const placementLabel = placementTarget === null ? '—' : placementTarget + 1;
+  const canPlaceToken = legalActions.some((a) => a.type === 'place');
+  const bubbleAllowed = bubbleOptions.length > 0 && moveOptions.length === 0 && !canPlaceToken;
 
-  const topCount = selectedSpace !== null ? topContiguousCount(state.board[selectedSpace], state.currentPlayer) : 0;
-
-  const attemptMove = () => {
-    if (selectedSpace === null) return;
-    const action: MoveAction = { type: 'move', from: selectedSpace, dir: direction, count: segmentSize };
-    const isLegal = legalActions.some(
-      (a) => a.type === 'move' && a.from === action.from && a.dir === action.dir && a.count === action.count
-    );
-    if (!isLegal) return;
-    dispatch(action);
-    setSelectedSpace(null);
-  };
-
-  const attemptPlace = () => {
-    const isLegal = legalActions.some((a) => a.type === 'place');
-    if (isLegal) {
-      dispatch({ type: 'place' });
-      setSelectedSpace(null);
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 1200);
+      return () => clearTimeout(t);
     }
+  }, [toast]);
+
+  useEffect(() => {
+    setSelection(null);
+    setBubbleMode(false);
+  }, [state.currentIndex]);
+
+  useEffect(() => {
+    const player = currentPlayer;
+    if (!player || player.kind !== 'bot' || state.winner) return;
+    const action = chooseBotAction(state, player.difficulty || 'easy');
+    if (!action) return;
+    const timer = setTimeout(() => dispatch(action), 600);
+    return () => clearTimeout(timer);
+  }, [state, currentPlayer, dispatch]);
+
+  const handleTokenSelect = (space: number, tokenIndex: number) => {
+    const stack = state.board[space];
+    const playerId = currentPlayer.id;
+    const topCount = topContiguousCount(stack, playerId);
+    const topStart = stack.length - topCount;
+    if (tokenIndex < topStart) return;
+    if (stack[tokenIndex].player !== playerId) return;
+    const count = stack.length - tokenIndex;
+    const hasMove = moveOptions.some((m) => m.from === space && m.count === count);
+    if (!hasMove) return;
+    setSelection({ space, count });
   };
 
-  const attemptBubble = (space: number, tokenIndex: number) => {
+  const handleBubbleClick = (space: number, tokenIndex: number) => {
+    if (!bubbleAllowed) return;
     const action: BubbleAction = { type: 'bubble', space, tokenIndex };
-    const isLegal = legalActions.some(
-      (a) => a.type === 'bubble' && a.space === action.space && a.tokenIndex === action.tokenIndex
-    );
+    const isLegal = legalActions.some((a) => a.type === 'bubble' && a.space === space && a.tokenIndex === tokenIndex);
     if (!isLegal) return;
     dispatch(action);
-    setBubbleMode(false);
-    setSelectedSpace(null);
   };
 
-  const handleSpaceClick = (spaceIndex: number) => {
-    if (bubbleMode) return;
-    const count = topContiguousCount(state.board[spaceIndex], state.currentPlayer);
-    if (count === 0) return;
-    setSelectedSpace(spaceIndex);
-    setSegmentSize(Math.min(segmentSize, count) || 1);
-  };
-
-  const currentLegalMoveDirections = useMemo(() => {
-    if (selectedSpace === null) return [] as ('forward' | 'backward')[];
+  const destinationOptions = useMemo(() => {
+    if (!selection) return [] as { landing: ReturnType<typeof predictLandingForMove>; action: MoveAction }[];
     return moveOptions
-      .filter((m) => m.from === selectedSpace)
-      .map((m) => m.dir);
-  }, [selectedSpace, moveOptions]);
+      .filter((m) => m.from === selection.space && m.count === selection.count)
+      .map((action) => ({ action, landing: predictLandingForMove(state, action) }))
+      .filter((item) => item.landing !== null);
+  }, [selection, moveOptions, state]);
 
-  const info = state.winner ? `${formatPlayer(state.winner)} wins!` : `${formatPlayer(state.currentPlayer)} to act`;
+  const handleDestinationClick = (target: number | 'exit') => {
+    if (!selection) return;
+    const match = destinationOptions.find((opt) =>
+      opt.landing && (opt.landing.type === 'exit' ? target === 'exit' : opt.landing.index === target)
+    );
+    if (!match) {
+      setToast('Illegal move');
+      return;
+    }
+    dispatch(match.action);
+    setSelection(null);
+  };
+
+  const setPlayerKind = (idx: number, kind: PlayerInfo['kind']) => {
+    setPlayerConfigs((prev) => prev.map((p, i) => (i === idx ? { ...p, kind } : p)));
+  };
+
+  const setDifficulty = (idx: number, difficulty: NonNullable<PlayerInfo['difficulty']>) => {
+    setPlayerConfigs((prev) => prev.map((p, i) => (i === idx ? { ...p, difficulty } : p)));
+  };
+
+  const addPlayer = () => {
+    setPlayerConfigs((prev) => {
+      if (prev.length >= 8) return prev;
+      const nextIdx = prev.length;
+      return [
+        ...prev,
+        {
+          id: `P${nextIdx + 1}`,
+          name: `Player ${nextIdx + 1}`,
+          color: palette[nextIdx % palette.length],
+          kind: 'human'
+        }
+      ];
+    });
+  };
+
+  const removePlayer = (idx: number) => {
+    setPlayerConfigs((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== idx)));
+  };
+
+  const restartWithConfig = () => {
+    setSelection(null);
+    setBubbleMode(false);
+    reset(playerConfigs);
+  };
+
+  const selectionInfo = selection ? `${selection.count} token(s) from space ${selection.space + 1}` : 'None';
+  const info = state.winner ? `${state.winner} wins!` : `${currentPlayer?.name ?? '—'} to act`;
 
   return (
     <div className="app">
       <div className="header">
         <div>
           <h1>STACKERS: Five & Slide</h1>
-          <div className="legend">Stacks are bottom → top in reading order.</div>
+          <div className="legend">Stacks render bottom → top; topmost tokens are clickable.</div>
         </div>
-        <button onClick={reset}>Reset</button>
+        <div className="header-actions">
+          <button onClick={restartWithConfig}>Restart</button>
+        </div>
       </div>
-      <div className="message">{info}</div>
-      <div className="message">
-        Unplaced – Red: {state.unplaced.RED}, Blue: {state.unplaced.BLUE} | Exited – Red: {state.exited.RED}, Blue:{' '}
-        {state.exited.BLUE}
-      </div>
-      <div className="board">
-        {state.board.map((stack, idx) => (
-          <div key={idx} className="space">
-            <div className="space-label">{idx + 1}</div>
-            <div className="stack" onClick={() => handleSpaceClick(idx)}>
-              {stack.map((token, tIdx) => {
-                const isTop = tIdx === stack.length - 1;
-                const isCurrentPlayer = token.player === state.currentPlayer;
-                const selectable = isCurrentPlayer && isTop && !bubbleMode;
-                const pinnedSelectable = bubbleMode && isCurrentPlayer && isPinned(stack, tIdx) && bubbleAllowed;
-                return (
-                  <div
-                    key={tIdx}
-                    className={tokenClass(token.player)}
-                    style={{ opacity: selectable || pinnedSelectable ? 1 : 0.7, borderColor: selectable ? '#fb7185' : undefined }}
-                    onClick={() => {
-                      if (pinnedSelectable) attemptBubble(idx, tIdx);
-                      else if (selectable) handleSpaceClick(idx);
-                    }}
-                  >
-                    {token.player === 'RED' ? 'R' : 'B'}
-                  </div>
-                );
-              })}
+
+      <section className="setup">
+        <h3>Local Players & Bots (2–8)</h3>
+        <div className="player-grid">
+          {playerConfigs.map((p, idx) => (
+            <div key={p.id} className="player-card" style={{ borderColor: p.color }}>
+              <div className="player-row">
+                <span className="swatch" style={{ background: p.color }} />
+                <strong>{p.name}</strong>
+                <button onClick={() => removePlayer(idx)} disabled={playerConfigs.length <= 2}>
+                  Remove
+                </button>
+              </div>
+              <div className="player-row">
+                <label>
+                  Type:
+                  <select value={p.kind} onChange={(e) => setPlayerKind(idx, e.target.value as PlayerInfo['kind'])}>
+                    <option value="human">Human</option>
+                    <option value="bot">Bot</option>
+                  </select>
+                </label>
+                {p.kind === 'bot' && (
+                  <label>
+                    Difficulty:
+                    <select
+                      value={p.difficulty ?? 'easy'}
+                      onChange={(e) => setDifficulty(idx, e.target.value as NonNullable<PlayerInfo['difficulty']>)}
+                    >
+                      <option value="easy">Easy</option>
+                      <option value="medium">Medium</option>
+                      <option value="hard">Hard</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+              <div className="player-row">Unplaced: {state.unplaced[p.id] ?? INITIAL_TOKENS}</div>
+              <div className="player-row">Exited: {state.exited[p.id] ?? 0}</div>
             </div>
-          </div>
-        ))}
+          ))}
+          {playerConfigs.length < 8 && (
+            <button className="add-player" onClick={addPlayer}>
+              + Add player
+            </button>
+          )}
+        </div>
+      </section>
+
+      <div className="message">{info}</div>
+      {state.message && <div className="message subtle">{state.message}</div>}
+      {toast && <div className="message warning">{toast}</div>}
+
+      <div className="board">
+        {state.board.map((stack, idx) => {
+          const topCount = topContiguousCount(stack, currentPlayer.id);
+          const topStart = stack.length - topCount;
+          return (
+            <div
+              key={idx}
+              className={`space ${destinationOptions.some((opt) => opt.landing?.type === 'space' && opt.landing.index === idx) ? 'highlight' : ''}`}
+              onClick={() => {
+                const exitOption = destinationOptions.find((opt) => opt.landing?.type === 'exit');
+                const spaceOption = destinationOptions.find((opt) => opt.landing?.type === 'space' && opt.landing.index === idx);
+                if (spaceOption) {
+                  handleDestinationClick(idx);
+                } else if (!exitOption) {
+                  setSelection(null);
+                }
+              }}
+            >
+              <div className="space-label">{idx + 1}</div>
+              <div className="stack">
+                {stack
+                  .map((token, tIdx) => ({ token, tIdx }))
+                  .reverse()
+                  .map(({ token, tIdx }) => {
+                    const actualIndex = stack.length - 1 - tIdx;
+                    const isTopSegment = selection?.space === idx && actualIndex >= stack.length - selection.count;
+                    const hoverSegment = hoverSelection?.space === idx && actualIndex >= stack.length - hoverSelection.count;
+                    const selectable = actualIndex >= topStart && token.player === currentPlayer.id && !bubbleMode;
+                    const bubbleSelectable = bubbleAllowed && bubbleMode && token.player === currentPlayer.id && isPinned(stack, actualIndex);
+                    return (
+                      <div
+                        key={tIdx}
+                        className={tokenClasses(token, !!isTopSegment, !!hoverSegment)}
+                        style={{ background: state.players.find((p) => p.id === token.player)?.color }}
+                        onMouseEnter={() => {
+                          if (selectable) setHoverSelection({ space: idx, count: stack.length - actualIndex });
+                        }}
+                        onMouseLeave={() => setHoverSelection(null)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (bubbleSelectable) {
+                            handleBubbleClick(idx, actualIndex);
+                          } else if (selectable) {
+                            handleTokenSelect(idx, actualIndex);
+                          }
+                        }}
+                      >
+                        {token.player}
+                      </div>
+                    );
+                  })}
+                {destinationOptions.some((opt) => opt.landing?.type === 'exit' && opt.action.from === idx) && (
+                  <div className="exit-indicator" onClick={() => handleDestinationClick('exit')}>
+                    Exit →
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="controls">
         <div className="control-card">
-          <h3>Move</h3>
-          <div>Direction:</div>
-          <div style={{ display: 'flex', gap: '0.5rem', margin: '0.25rem 0' }}>
-            <button
-              onClick={() => setDirection('forward')}
-              disabled={!currentLegalMoveDirections.includes('forward')}
-              style={{ background: direction === 'forward' ? '#c7d2fe' : undefined }}
-            >
-              Forward
-            </button>
-            <button
-              onClick={() => setDirection('backward')}
-              disabled={!currentLegalMoveDirections.includes('backward')}
-              style={{ background: direction === 'backward' ? '#c7d2fe' : undefined }}
-            >
-              Backward
-            </button>
-          </div>
-          <div>
-            Segment size:{' '}
-            <select value={segmentSize} onChange={(e) => setSegmentSize(Number(e.target.value))}>
-              {Array.from({ length: topCount }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="selection-info">
-            Selected space: {selectedSpace !== null ? selectedSpace + 1 : 'none'}
-          </div>
-          <button onClick={attemptMove} disabled={!legalActions.some((a) => a.type === 'move')}>
-            Move
-          </button>
-        </div>
-
-        <div className="control-card">
-          <h3>Place</h3>
-          <div>Lowest empty slot: {placementLabel}</div>
-          <button onClick={attemptPlace} disabled={!legalActions.some((a) => a.type === 'place')}>
+          <h3>Placement</h3>
+          <p>Lowest empty space: {placementTarget !== null ? placementTarget + 1 : '—'}</p>
+          <button onClick={() => dispatch({ type: 'place' })} disabled={!canPlaceToken}>
             Place token
           </button>
         </div>
-
         <div className="control-card">
           <h3>Bubble Up</h3>
           <button onClick={() => setBubbleMode(true)} disabled={!bubbleAllowed}>
-            Start bubble
+            Start bubble mode
           </button>
-          {bubbleMode && <div>Click a pinned token you own.</div>}
+          {bubbleMode && bubbleAllowed && <p>Tap a pinned token you own to bubble.</p>}
+        </div>
+        <div className="control-card">
+          <h3>Selection</h3>
+          <div>Selected: {selectionInfo}</div>
+          <div>Legal destinations highlighted on board.</div>
         </div>
       </div>
 
-      {state.message && <div className="message">{state.message}</div>}
-      <div className="message">
-        Tip: if you cannot move and have unplaced tokens with an empty space, you must place. Bubble Up is only for when
-        you are fully stuck.
+      <div className="message subtle">
+        If all on-board tokens are pinned and an empty space exists with unplaced tokens, placement is forced. Bubble Up is
+        only for turns with no moves or placements.
       </div>
-      <div className="message">Turn order: Red starts. Current player: {formatPlayer(state.currentPlayer)}</div>
+      <div className="message subtle">Segment selection: click deeper into your top stack to move that token and everything above it.</div>
     </div>
   );
 }
