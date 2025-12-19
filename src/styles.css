@@ -31,11 +31,7 @@ body {
 }
 
 .play-area {
-  display: grid;
-  grid-template-columns: 280px minmax(520px, 1fr) 240px;
-  gap: 0.75rem;
   margin: 1rem 0;
-  align-items: flex-start;
 }
 
 .play-area.disabled {
@@ -43,8 +39,7 @@ body {
   opacity: 0.75;
 }
 
-.start-zone,
-.exit-space,
+.card,
 .control-card,
 .setup {
   background: #fff;
@@ -61,6 +56,10 @@ body {
 .start-info {
   color: #475569;
   font-size: 0.9rem;
+}
+
+.start-zone {
+  flex: 0 0 clamp(200px, 18vw, 260px);
 }
 
 .reserve-list {
@@ -109,10 +108,20 @@ body {
   font-weight: 600;
 }
 
-.board {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
-  gap: 0.75rem;
+.track {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.board-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .space {
@@ -126,6 +135,7 @@ body {
   background: #fff;
   position: relative;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  flex: 0 0 clamp(120px, 11vw, 160px);
 }
 
 .space.highlight,
@@ -150,7 +160,7 @@ body {
 .stack {
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--chip-gap);
   margin-top: 1.25rem;
@@ -191,6 +201,22 @@ body {
 
 .exit-space {
   min-height: calc(var(--stack-height) + 1rem);
+  flex: 0 0 clamp(140px, 14vw, 180px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.exit-stack {
+  width: 100%;
+}
+
+.exit-slot {
+  opacity: 0.25;
+}
+
+.exit-slot.filled {
+  opacity: 1;
 }
 
 .scores {
@@ -346,8 +372,8 @@ button:disabled {
 }
 
 @media (max-width: 1024px) {
-  .play-area {
-    grid-template-columns: 1fr;
+  .space {
+    flex-basis: clamp(110px, 16vw, 160px);
   }
 }
 
@@ -355,10 +381,6 @@ button:disabled {
   .setup-actions {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .board {
-    grid-template-columns: repeat(2, minmax(140px, 1fr));
   }
 
   :root {
