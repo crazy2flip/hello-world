@@ -10,15 +10,16 @@ Install dependencies (from the repo root):
 npm install
 ```
 
-Run the dev server (binds to `0.0.0.0:4173` for the preview):
+Run the dev server (binds to `0.0.0.0:5173` for the preview) and the WebSocket room relay (binds to `0.0.0.0:8787`):
 
 ```bash
 # from /workspace/hello-world
+npm run room-server &
 npm run dev
 ```
 
-Once it starts you will see a local URL such as `http://localhost:4173/`.
-In this environment open the “Web 4173” preview to launch the app in your browser.
+Once it starts you will see a local URL such as `http://localhost:5173/`.
+In this environment open the “Web 5173” preview to launch the app in your browser.
 
 Run tests:
 

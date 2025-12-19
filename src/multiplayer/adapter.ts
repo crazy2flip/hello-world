@@ -76,7 +76,8 @@ function randomCode(length = 5) {
 
 export class LocalMultiplayerAdapter implements MultiplayerAdapter {
   public role: 'host' | 'client';
-  private channel: BroadcastChannel | null = null;
+  private socket: WebSocket | null = null;
+  private pendingSocket: Promise<void> | null = null;
   private callbacks: { state: ((s: GameState) => void)[]; join: ((p: PlayerInfo) => void)[]; leave: ((id: string) => void)[]; players: ((p: PlayerInfo[]) => void)[] } = {
     state: [],
     join: [],
@@ -92,6 +93,13 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
 
   constructor(role: 'host' | 'client') {
     this.role = role;
+  }
+
+  private getRoomSocketUrl() {
+    const host = window.location.hostname;
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const port = 8787;
+    return `${protocol}://${host}:${port}`;
   }
 
   getAssignedPlayer() {
@@ -118,6 +126,82 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     this.callbacks.players.push(cb);
   }
 
+  private ensureSocket(roomCode: string) {
+    if (this.roomCode && this.roomCode !== roomCode && this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.pendingSocket) return this.pendingSocket;
+
+    const url = this.getRoomSocketUrl();
+    console.info('[room] opening websocket to', url, 'for room', roomCode);
+
+    this.pendingSocket = new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(url);
+      let settled = false;
+
+      const cleanup = () => {
+        ws.removeEventListener('open', handleOpen);
+        ws.removeEventListener('error', handleError);
+      };
+
+      const handleOpen = () => {
+        console.info('[room] websocket connected');
+        ws.send(JSON.stringify({ type: 'join-room', roomCode }));
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const handleError = (event: Event) => {
+        console.error('[room] websocket error', event);
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(new Error('Unable to connect to room server'));
+        }
+      };
+
+      ws.addEventListener('open', handleOpen);
+      ws.addEventListener('error', handleError);
+
+      ws.addEventListener('close', () => {
+        console.warn('[room] websocket closed');
+        this.socket = null;
+        this.pendingSocket = null;
+      });
+
+      ws.addEventListener('message', (event) => {
+        try {
+          const parsed = JSON.parse(event.data as string) as { type: string; roomCode?: string; payload?: RoomMessage };
+          if (parsed.type === 'room-message' && parsed.payload) {
+            this.handleMessage(parsed.payload);
+          }
+        } catch (err) {
+          console.error('[room] failed to parse message', err);
+        }
+      });
+
+      this.socket = ws;
+    }).finally(() => {
+      this.pendingSocket = null;
+    });
+
+    return this.pendingSocket;
+  }
+
+  private sendMessage(msg: RoomMessage) {
+    if (!this.roomCode) throw new Error('No room joined');
+    const payload = { type: 'room-message', roomCode: this.roomCode, payload: msg };
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(payload));
+      return;
+    }
+    throw new Error('Room socket not connected');
+  }
+
   private emitState(state: GameState) {
     this.callbacks.state.forEach((cb) => cb(state));
   }
@@ -126,19 +210,13 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     this.callbacks.players.forEach((cb) => cb(players));
   }
 
-  private openChannel(roomCode: string) {
-    if (this.channel) this.channel.close();
-    this.channel = new BroadcastChannel(`stackers-room-${roomCode}`);
-    this.channel.onmessage = (event) => this.handleMessage(event.data as RoomMessage);
-  }
-
   async createRoom(hostPlayer: PlayerInfo): Promise<{ roomCode: string }> {
     if (this.role !== 'host') throw new Error('Only host can create room');
     const code = randomCode();
     this.roomCode = code;
+    await this.ensureSocket(code);
     this.hostPlayers = [hostPlayer];
     this.assignedPlayer = hostPlayer;
-    this.openChannel(code);
     this.broadcastPlayers();
     return { roomCode: code };
   }
@@ -146,32 +224,38 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
   async joinRoom(roomCode: string, requestedName: string): Promise<void> {
     if (this.role !== 'client') throw new Error('Only client can join');
     this.roomCode = roomCode;
-    this.openChannel(roomCode);
+    await this.ensureSocket(roomCode);
     const msg: JoinRequest = { type: 'join-request', clientId: this.clientId, name: requestedName };
-    this.channel?.postMessage(msg);
+    this.sendMessage(msg);
     return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('No response from host')), 5000);
-      const handler = (event: MessageEvent<RoomMessage>) => {
-        const data = event.data;
-        if (data.type === 'join-accept' && data.clientId === this.clientId) {
-          clearTimeout(timeout);
-          this.channel!.removeEventListener('message', handler as any);
-          this.assignedPlayer = data.player;
-          this.callbacks.join.forEach((cb) => cb(data.player));
-          this.emitPlayers(data.players);
-          if (data.state) {
-            this.state = data.state;
-            this.emitState(data.state);
+      const handler = (event: MessageEvent) => {
+        try {
+          const envelope = JSON.parse(event.data as string) as { type: string; payload?: RoomMessage };
+          if (envelope.type !== 'room-message' || !envelope.payload) return;
+          const data = envelope.payload;
+          if (data.type === 'join-accept' && data.clientId === this.clientId) {
+            clearTimeout(timeout);
+            this.socket!.removeEventListener('message', handler as any);
+            this.assignedPlayer = data.player;
+            this.callbacks.join.forEach((cb) => cb(data.player));
+            this.emitPlayers(data.players);
+            if (data.state) {
+              this.state = data.state;
+              this.emitState(data.state);
+            }
+            resolve();
           }
-          resolve();
-        }
-        if (data.type === 'join-reject' && data.clientId === this.clientId) {
-          clearTimeout(timeout);
-          this.channel!.removeEventListener('message', handler as any);
-          reject(new Error(data.reason));
+          if (data.type === 'join-reject' && data.clientId === this.clientId) {
+            clearTimeout(timeout);
+            this.socket!.removeEventListener('message', handler as any);
+            reject(new Error(data.reason));
+          }
+        } catch (err) {
+          console.error('[room] invalid message while joining', err);
         }
       };
-      this.channel?.addEventListener('message', handler as any);
+      this.socket?.addEventListener('message', handler as any);
     });
   }
 
@@ -196,16 +280,24 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
   }
 
   private broadcastState() {
-    if (this.channel && this.state) {
+    if (this.socket && this.state) {
       const msg: StateUpdate = { type: 'state-update', state: this.state };
-      this.channel.postMessage(msg);
+      try {
+        this.sendMessage(msg);
+      } catch (err) {
+        console.error('[room] failed to broadcast state', err);
+      }
     }
   }
 
   private broadcastPlayers() {
-    if (this.channel) {
+    if (this.socket) {
       const msg: PlayerUpdate = { type: 'players-update', players: this.hostPlayers };
-      this.channel.postMessage(msg);
+      try {
+        this.sendMessage(msg);
+      } catch (err) {
+        console.error('[room] failed to broadcast players', err);
+      }
       this.emitPlayers(this.hostPlayers);
     }
   }
@@ -221,7 +313,11 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
         clientId: this.clientId,
         playerId: this.assignedPlayer.id
       };
-      this.channel?.postMessage(msg);
+      try {
+        this.sendMessage(msg);
+      } catch (err) {
+        console.error('[room] failed to send action', err);
+      }
     }
   }
 
@@ -251,7 +347,7 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     if (this.role !== 'host') return;
     if (this.hostPlayers.length >= 8) {
       const reject: JoinReject = { type: 'join-reject', clientId: message.clientId, reason: 'Room full' };
-      this.channel?.postMessage(reject);
+      this.sendMessage(reject);
       return;
     }
     const nextIdx = this.hostPlayers.length;
@@ -269,7 +365,7 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
       players: this.hostPlayers,
       state: this.state ?? undefined
     };
-    this.channel?.postMessage(accept);
+    this.sendMessage(accept);
     this.callbacks.join.forEach((cb) => cb(player));
     this.broadcastPlayers();
   }
@@ -294,9 +390,13 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
   }
 
   private sendToast(clientId: string | undefined, text: string) {
-    if (!clientId || !this.channel) return;
+    if (!clientId || !this.socket) return;
     const toast: ToastMessage = { type: 'toast', clientId, text };
-    this.channel.postMessage(toast);
+    try {
+      this.sendMessage(toast);
+    } catch (err) {
+      console.error('[room] failed to send toast', err);
+    }
   }
 
   private maybeScheduleBot() {
