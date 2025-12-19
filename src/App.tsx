@@ -61,7 +61,7 @@ export default function App() {
 
   const assignedPlayer = adapter?.getAssignedPlayer() ?? null;
   const started = !!state;
-  const livePlayers = started ? state.players : players.length >= 2 ? players : defaultPlayers();
+  const livePlayers = started ? state.players : players.length > 0 ? players : defaultPlayers();
   const liveState = state ?? createInitialState(livePlayers);
   const currentPlayer = liveState.players[liveState.currentIndex];
   const myTurn = started && assignedPlayer?.id === currentPlayer?.id;
@@ -353,7 +353,7 @@ export default function App() {
       </div>
 
       <section className="setup">
-        <h3>Room & Players (2–8)</h3>
+        <h3>Room & Players (1–8)</h3>
         <div className="player-grid">
           <div className="player-card" style={{ borderColor: '#ccc' }}>
             <div className="player-row">
@@ -403,7 +403,7 @@ export default function App() {
               </div>
               {adapter?.role === 'host' && idx > 0 && (
                 <div className="player-row">
-                  <button onClick={() => removePlayer(p)} disabled={players.length <= 2}>
+                  <button onClick={() => removePlayer(p)} disabled={players.length <= 1}>
                     Remove
                   </button>
                 </div>
@@ -420,7 +420,8 @@ export default function App() {
         {adapter?.role === 'host' && (
           <div className="setup-actions">
             <div>Share the room code after creating it. Players join and receive state from the host.</div>
-            <button onClick={startGame} disabled={players.length < 2 || !roomCode}>
+            <div className="subtle">Want to play solo? Start now with just the host seat, or add bots for practice.</div>
+            <button onClick={startGame} disabled={players.length < 1 || !roomCode}>
               Start game
             </button>
           </div>
