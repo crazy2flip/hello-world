@@ -1,4 +1,4 @@
-import { GameState, Landing, LegalAction, MoveAction, PlayerID, Token } from './types';
+import { BubbleAction, GameState, Landing, LegalAction, MoveAction, PlayerID, Token } from './types';
 import { nextPlayerIndex } from './state';
 
 function cloneBoard(board: Token[][]): Token[][] {
@@ -177,7 +177,7 @@ export function getLegalActions(state: GameState): LegalAction[] {
 
   const bubbleOptions = getBubbleOptions(state);
   if (bubbleOptions.length > 0) {
-    legal.push(...bubbleOptions.map((b) => ({ type: 'bubble', ...b })));
+    legal.push(...bubbleOptions.map((b): BubbleAction => ({ type: 'bubble', ...b })));
   }
   return legal;
 }
