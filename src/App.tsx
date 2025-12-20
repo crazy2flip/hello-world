@@ -61,7 +61,7 @@ export default function App() {
 
   const assignedPlayer = adapter?.getAssignedPlayer() ?? null;
   const started = !!state;
-  const livePlayers = started ? state.players : players.length >= 2 ? players : defaultPlayers();
+  const livePlayers = started ? state.players : players.length > 0 ? players : defaultPlayers();
   const liveState = state ?? createInitialState(livePlayers);
   const currentPlayer = liveState.players[liveState.currentIndex];
   const myTurn = started && assignedPlayer?.id === currentPlayer?.id;
@@ -251,27 +251,44 @@ export default function App() {
   const placementInfo = canPlaceToken && placementTarget !== null ? `Drag to space ${placementTarget + 1}` : 'Placement locked';
 
   const createRoom = async () => {
-    const host = new LocalMultiplayerAdapter('host');
     const hostPlayer: PlayerInfo = { ...defaultPlayers(1)[0], name: nameInput.trim() || 'Host' };
-    await host.createRoom(hostPlayer);
-    setAdapter(host);
-    setRoomCode(host.getRoomCode());
-    setPlayers([hostPlayer]);
-    setStatus('Room created. Share the code to invite others on your network.');
+    setStatus('Connecting to room server...');
+    console.info('Creating room for host player', hostPlayer.name);
+    try {
+      const host = new LocalMultiplayerAdapter('host');
+      await host.createRoom(hostPlayer);
+      setAdapter(host);
+      setRoomCode(host.getRoomCode());
+      setPlayers([hostPlayer]);
+      setStatus('Room created. Share the code to invite others on your network.');
+    } catch (err) {
+      console.error('Room creation failed', err);
+      setStatus(`Failed to create room: ${(err as Error).message}`);
+      setToast('Could not create room. Ensure the room server is running and reachable.');
+    }
   };
 
   const joinRoom = async () => {
-    const client = new LocalMultiplayerAdapter('client');
-    setAdapter(client);
-    setStatus('Requesting to join...');
-    await client.joinRoom(joinCode.trim().toUpperCase(), nameInput.trim() || 'Player');
-    setRoomCode(joinCode.trim().toUpperCase());
-    setStatus('Joined room. Waiting for host to start.');
-    if (client.getAssignedPlayer()) {
-      setPlayers((prev) => {
-        if (prev.length > 0) return prev;
-        return [client.getAssignedPlayer()!];
-      });
+    const trimmedCode = joinCode.trim().toUpperCase();
+    setStatus('Connecting to room...');
+    console.info('Attempting to join room', trimmedCode);
+    try {
+      const client = new LocalMultiplayerAdapter('client');
+      await client.joinRoom(trimmedCode, nameInput.trim() || 'Player');
+      setAdapter(client);
+      setRoomCode(trimmedCode);
+      setStatus('Joined room. Waiting for host to start.');
+      if (client.getAssignedPlayer()) {
+        setPlayers((prev) => {
+          if (prev.length > 0) return prev;
+          return [client.getAssignedPlayer()!];
+        });
+      }
+    } catch (err) {
+      console.error('Join failed', err);
+      setStatus(`Failed to join room: ${(err as Error).message}`);
+      setToast('Could not join room. Check the room code and network connection.');
+      setAdapter(null);
     }
   };
 
@@ -336,7 +353,7 @@ export default function App() {
       </div>
 
       <section className="setup">
-        <h3>Room & Players (2–8)</h3>
+        <h3>Room & Players (1–8)</h3>
         <div className="player-grid">
           <div className="player-card" style={{ borderColor: '#ccc' }}>
             <div className="player-row">
@@ -386,7 +403,7 @@ export default function App() {
               </div>
               {adapter?.role === 'host' && idx > 0 && (
                 <div className="player-row">
-                  <button onClick={() => removePlayer(p)} disabled={players.length <= 2}>
+                  <button onClick={() => removePlayer(p)} disabled={players.length <= 1}>
                     Remove
                   </button>
                 </div>
@@ -403,7 +420,8 @@ export default function App() {
         {adapter?.role === 'host' && (
           <div className="setup-actions">
             <div>Share the room code after creating it. Players join and receive state from the host.</div>
-            <button onClick={startGame} disabled={players.length < 2 || !roomCode}>
+            <div className="subtle">Want to play solo? Start now with just the host seat, or add bots for practice.</div>
+            <button onClick={startGame} disabled={players.length < 1 || !roomCode}>
               Start game
             </button>
           </div>

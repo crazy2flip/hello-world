@@ -10,15 +10,16 @@ Install dependencies (from the repo root):
 npm install
 ```
 
-Run the dev server (binds to `0.0.0.0:4173` for the preview):
+Run the dev server (binds to `0.0.0.0:5173` for the preview) and the WebSocket room relay (binds to `0.0.0.0:8787`):
 
 ```bash
 # from /workspace/hello-world
+npm run room-server &
 npm run dev
 ```
 
-Once it starts you will see a local URL such as `http://localhost:4173/`.
-In this environment open the “Web 4173” preview to launch the app in your browser.
+Once it starts you will see a local URL such as `http://localhost:5173/`.
+In this environment open the “Web 5173” preview to launch the app in your browser.
 
 Run tests:
 
@@ -27,12 +28,12 @@ npm test
 ```
 
 ## How to play in this preview
-- Start at the setup menu: choose 2–8 players (human or bot), edit player names, and click **Start game**. The lineup locks until you return to setup.
+- Start at the setup menu: choose 1–8 players (human or bot), edit player names, and click **Start game**. The lineup locks until you return to setup.
 - Tap/click a token you control or drag it; if multiple of your tokens are stacked on top, tapping deeper selects that token **and all above it**.
 - All legal destination spaces (forward or backward) highlight automatically; tap or drop onto a highlight to move. Sliding resolves automatically. Dropping onto the Exit panel finishes an exiting move when available.
 - To **place**, drag from your Start Zone (unplaced chips) to the glowing lowest empty space. Placement is forced when all your on-board tokens are pinned and an empty space exists.
 - If you have no legal moves and cannot place, you may drag one of your pinned tokens upward in its stack to bubble it to the top.
-- Configure 2–8 players (humans or bots). Bots auto-play with a brief delay.
+- Configure 1–8 players (humans or bots). Bots auto-play with a brief delay. Solo host-only runs are supported for practice.
 
 ## Rules summary (implemented in engine)
 - Board spaces 1–8 each hold a bottom→top stack (array index 0 is bottom). Exit is beyond space 8.
