@@ -74,6 +74,22 @@ function randomCode(length = 5) {
   return res;
 }
 
+function safeClientId() {
+  const cryptoObj = globalThis.crypto as Crypto & { randomBytes?: (size: number) => { toString: (encoding: string) => string } };
+
+  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
+
+  const fallbackMessage =
+    "Your Node version doesn’t support crypto.randomUUID(). Using fallback room ID generation (or please upgrade to Node 16+).";
+
+  if (typeof cryptoObj?.randomBytes === 'function') {
+    console.warn(fallbackMessage);
+    return cryptoObj.randomBytes(16).toString('hex');
+  }
+
+  throw new Error(fallbackMessage);
+}
+
 export class LocalMultiplayerAdapter implements MultiplayerAdapter {
   public role: 'host' | 'client';
   private socket: WebSocket | null = null;
@@ -85,7 +101,7 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     players: []
   };
   private roomCode: string | null = null;
-  private clientId = crypto.randomUUID();
+  private clientId = safeClientId();
   private assignedPlayer: PlayerInfo | null = null;
   private hostPlayers: PlayerInfo[] = [];
   private state: GameState | null = null;
