@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { WebSocketServer } from 'ws';
 
 const PORT = Number(process.env.ROOM_PORT ?? '8787');
@@ -6,6 +7,9 @@ const HOST = '0.0.0.0';
 const rooms = new Map();
 
 const wss = new WebSocketServer({ host: HOST, port: PORT });
+
+const randomUUIDAvailable = typeof crypto.randomUUID === 'function';
+log('runtime info', { node: process.version, randomUUIDAvailable });
 
 function log(...args) {
   console.log('[room-server]', ...args);
