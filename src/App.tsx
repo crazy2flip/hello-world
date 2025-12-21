@@ -51,12 +51,14 @@ function nextBot(players: PlayerInfo[], difficulty: NonNullable<PlayerInfo['diff
 export default function App() {
   const [mode, setMode] = useState<'hotseat' | 'network'>('hotseat');
   const [networkRole, setNetworkRole] = useState<'host' | 'client'>('host');
-  const [controller, setController] = useState<GameController | null>(() => {
+  const controllerRef = useRef<GameController | null>(null);
+  if (!controllerRef.current) {
     const first = new HotseatController();
     first.setPlayers?.(defaultPlayers());
-    return first;
-  });
-  const controllerRef = useRef<GameController | null>(null);
+    controllerRef.current = first;
+  }
+  const controller = controllerRef.current;
+  const [controllerVersion, bumpControllerVersion] = useState(0);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
   const [nameInput, setNameInput] = useState('Host');
@@ -78,18 +80,16 @@ export default function App() {
   const myTurn = started && (mode === 'hotseat' || assignedPlayer?.id === currentPlayer?.id || controller?.role === 'local');
 
   const updateController = useCallback((next: GameController | null) => {
-    setController((prev) => {
-      if (prev && prev !== next) {
-        prev.dispose();
+    const current = controllerRef.current;
+    if (current && current !== next) {
+      if (current.kind === 'network' && (!next || next.kind !== 'network')) {
+        console.info('[room] closing WS because leaving network mode');
       }
-      controllerRef.current = next;
-      return next;
-    });
+      current.dispose();
+    }
+    controllerRef.current = next;
+    bumpControllerVersion((v) => v + 1);
   }, []);
-
-  useEffect(() => {
-    controllerRef.current = controller;
-  }, [controller]);
 
   useEffect(() => {
     return () => {
@@ -125,36 +125,41 @@ export default function App() {
   }, [mode]);
 
   useEffect(() => {
-    if (!controller) return;
+    const activeController = controllerRef.current;
+    if (!activeController) return;
     const handleState = (s: GameState) => {
       setState(s);
       setSelection(null);
       setHoverSelection(null);
     };
     const handlePlayers = (list: PlayerInfo[]) => setPlayers(list);
-    const disposeState = controller.onStateChange(handleState);
-    const disposePlayers = controller.onPlayersChange(handlePlayers);
+    const disposeState = activeController.onStateChange(handleState);
+    const disposePlayers = activeController.onPlayersChange(handlePlayers);
     const disposeJoin =
-      controller.kind === 'network' ? controller.onPlayerJoin?.((player) => setStatus(`${player.name} joined.`)) : undefined;
-    const initialPlayers = controller.getPlayers();
+      activeController.kind === 'network'
+        ? activeController.onPlayerJoin?.((player) => setStatus(`${player.name} joined.`))
+        : undefined;
+    const initialPlayers = activeController.getPlayers();
     if (initialPlayers.length) setPlayers(initialPlayers);
-    const initialState = controller.getState();
+    const initialState = activeController.getState();
     if (initialState) setState(initialState);
     return () => {
       disposeState?.();
       disposePlayers?.();
       disposeJoin?.();
     };
-  }, [controller]);
+  }, [controllerVersion]);
 
   useEffect(() => {
-    if (controller?.kind !== 'network') {
+    const activeController = controllerRef.current;
+    if (activeController?.kind !== 'network') {
       setConnectionStatus('idle');
       setDisconnectDetails(null);
       return;
     }
-    setConnectionStatus(controller.getConnectionStatus());
-    const cleanup = controller.onConnectionStatusChange?.((event) => {
+    const networkController = activeController as NetworkController;
+    setConnectionStatus(networkController.getConnectionStatus());
+    const cleanup = networkController.onConnectionStatusChange?.((event) => {
       setConnectionStatus(event.status);
       if (event.status === 'disconnected') {
         const detail = `Disconnected (code ${event.code ?? 'unknown'}${event.reason ? `: ${event.reason}` : ''})`;
@@ -168,7 +173,7 @@ export default function App() {
       }
     });
     return () => cleanup?.();
-  }, [controller]);
+  }, [controllerVersion]);
 
   const moveOptions = useMemo(() => (started ? getMoveOptions(liveState) : []), [started, liveState]);
   const bubbleOptions = useMemo(() => (started ? getBubbleOptions(liveState) : []), [started, liveState]);
@@ -368,6 +373,9 @@ export default function App() {
 
   const switchMode = (nextMode: 'hotseat' | 'network') => {
     if (controller && controller.kind !== nextMode) {
+      if (controller.kind === 'network') {
+        console.info('[room] closing WS because leaving network mode');
+      }
       controller.dispose();
     }
     setMode(nextMode);
@@ -394,10 +402,14 @@ export default function App() {
     setStatus('Connecting to room server...');
     console.info('Creating room for host player', hostPlayer.name);
     try {
-      const host = new NetworkController('host');
-      updateController(host);
-      await host.createRoom(hostPlayer);
-      setRoomCode(host.getRoomCode());
+      let host = controllerRef.current;
+      if (!(host instanceof NetworkController) || host.role !== 'host') {
+        host?.dispose();
+        host = new NetworkController('host');
+        updateController(host);
+      }
+      await (host as NetworkController).createRoom(hostPlayer);
+      setRoomCode((host as NetworkController).getRoomCode());
       setPlayers([hostPlayer]);
       setStatus('Room created. Share the code to invite others on your network.');
     } catch (err) {
@@ -413,15 +425,19 @@ export default function App() {
     setStatus('Connecting to room...');
     console.info('Attempting to join room', trimmedCode);
     try {
-      const client = new NetworkController('client');
-      updateController(client);
-      await client.joinRoom(trimmedCode, nameInput.trim() || 'Player');
+      let client = controllerRef.current;
+      if (!(client instanceof NetworkController) || client.role !== 'client') {
+        client?.dispose();
+        client = new NetworkController('client');
+        updateController(client);
+      }
+      await (client as NetworkController).joinRoom(trimmedCode, nameInput.trim() || 'Player');
       setRoomCode(trimmedCode);
       setStatus('Joined room. Waiting for host to start.');
-      if (client.getAssignedPlayer()) {
+      if ((client as NetworkController).getAssignedPlayer()) {
         setPlayers((prev) => {
           if (prev.length > 0) return prev;
-          return [client.getAssignedPlayer()!];
+          return [(client as NetworkController).getAssignedPlayer()!];
         });
       }
     } catch (err) {

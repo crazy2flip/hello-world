@@ -219,6 +219,7 @@ export class NetworkController implements GameController {
 
       const handleOpen = () => {
         console.info(`[room] websocket #${currentConnectionId} connected`);
+        console.info(`[room] websocket #${currentConnectionId} open → sending JOIN room=${roomCode}`);
         sendJoin();
         settled = true;
         this.reconnectAttempts = 0;
@@ -504,7 +505,11 @@ export class NetworkController implements GameController {
       this.botTimer = null;
     }
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
-      this.socket.close(1000, 'controller disposed');
+      const reason = 'leaving network mode';
+      console.info(
+        `[room] closing websocket #${this.connectionId ?? 'n/a'} code=1001 reason=${reason} (client cleanup)`
+      );
+      this.socket.close(1001, reason);
     }
     this.socket = null;
     this.pendingSocket = null;
