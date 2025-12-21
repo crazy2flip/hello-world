@@ -85,9 +85,12 @@ export class NetworkController implements GameController {
   }
 
   private getRoomSocketUrl() {
-    const host = window.location.hostname;
+    const envUrl = import.meta.env.VITE_ROOM_SERVER_URL;
+    if (envUrl) return envUrl;
+
+    const host = import.meta.env.VITE_ROOM_SERVER_HOST || window.location.hostname;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const port = 8787;
+    const port = import.meta.env.VITE_ROOM_SERVER_PORT || 8787;
     return `${protocol}://${host}:${port}`;
   }
 
