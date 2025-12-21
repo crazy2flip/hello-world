@@ -2,5 +2,9 @@ node_modules
 npm-debug.log*
 dist
 dist-ssr
+tsconfig.tsbuildinfo
+tsconfig.node.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 *.local
 .DS_Store
