@@ -2,21 +2,8 @@ import { applyAction, getLegalActions } from '../engine/engine';
 import { chooseBotAction } from '../engine/bots';
 import { createInitialState } from '../engine/state';
 import { GameState, LegalAction, PlayerInfo } from '../engine/types';
-
-export interface MultiplayerAdapter {
-  role: 'host' | 'client';
-  createRoom(hostPlayer: PlayerInfo): Promise<{ roomCode: string }>;
-  joinRoom(roomCode: string, requestedName: string): Promise<void>;
-  startGame(players: PlayerInfo[]): void;
-  sendAction(action: LegalAction): void;
-  setHostPlayers?(players: PlayerInfo[]): void;
-  onStateUpdate(callback: (state: GameState) => void): void;
-  onPlayerJoin(callback: (player: PlayerInfo) => void): void;
-  onPlayerLeave(callback: (playerId: string) => void): void;
-  onPlayersChanged(callback: (players: PlayerInfo[]) => void): void;
-  getAssignedPlayer(): PlayerInfo | null;
-  getRoomCode(): string | null;
-}
+import { makeRoomCode, makeRoomId } from '../utils/ids';
+import { GameController } from '../controllers/types';
 
 interface JoinRequest {
   type: 'join-request';
@@ -64,33 +51,10 @@ interface ToastMessage {
 type RoomMessage = JoinRequest | JoinAccept | JoinReject | PlayerUpdate | StateUpdate | ActionMessage | ToastMessage;
 
 const palette = ['#ef4444', '#3b82f6', '#10b981', '#f97316', '#a855f7', '#14b8a6', '#e11d48', '#0ea5e9'];
+const activeRoomCodes = new Set<string>();
 
-function randomCode(length = 5) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let res = '';
-  for (let i = 0; i < length; i++) {
-    res += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return res;
-}
-
-function safeClientId() {
-  const cryptoObj = globalThis.crypto as Crypto & { randomBytes?: (size: number) => { toString: (encoding: string) => string } };
-
-  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
-
-  const fallbackMessage =
-    "Your Node version doesn’t support crypto.randomUUID(). Using fallback room ID generation (or please upgrade to Node 16+).";
-
-  if (typeof cryptoObj?.randomBytes === 'function') {
-    console.warn(fallbackMessage);
-    return cryptoObj.randomBytes(16).toString('hex');
-  }
-
-  throw new Error(fallbackMessage);
-}
-
-export class LocalMultiplayerAdapter implements MultiplayerAdapter {
+export class NetworkController implements GameController {
+  public kind: GameController['kind'] = 'network';
   public role: 'host' | 'client';
   private socket: WebSocket | null = null;
   private pendingSocket: Promise<void> | null = null;
@@ -101,7 +65,7 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     players: []
   };
   private roomCode: string | null = null;
-  private clientId = safeClientId();
+  private clientId = makeRoomId();
   private assignedPlayer: PlayerInfo | null = null;
   private hostPlayers: PlayerInfo[] = [];
   private state: GameState | null = null;
@@ -126,7 +90,15 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     return this.roomCode;
   }
 
-  onStateUpdate(cb: (state: GameState) => void) {
+  getState() {
+    return this.state;
+  }
+
+  getPlayers() {
+    return this.hostPlayers.length ? this.hostPlayers : this.state?.players ?? [];
+  }
+
+  onStateChange(cb: (state: GameState) => void) {
     this.callbacks.state.push(cb);
   }
 
@@ -136,6 +108,10 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
 
   onPlayerLeave(cb: (playerId: string) => void) {
     this.callbacks.leave.push(cb);
+  }
+
+  onPlayersChange(cb: (players: PlayerInfo[]) => void) {
+    this.callbacks.players.push(cb);
   }
 
   onPlayersChanged(cb: (players: PlayerInfo[]) => void) {
@@ -228,7 +204,7 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
 
   async createRoom(hostPlayer: PlayerInfo): Promise<{ roomCode: string }> {
     if (this.role !== 'host') throw new Error('Only host can create room');
-    const code = randomCode();
+    const code = makeRoomCode(6, activeRoomCodes);
     this.roomCode = code;
     await this.ensureSocket(code);
     this.hostPlayers = [hostPlayer];
@@ -285,6 +261,10 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     }
   }
 
+  setPlayers(players: PlayerInfo[]) {
+    this.setHostPlayers(players);
+  }
+
   startGame(players: PlayerInfo[]) {
     if (this.role !== 'host') return;
     this.hostPlayers = players;
@@ -318,7 +298,7 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
     }
   }
 
-  sendAction(action: LegalAction) {
+  submitAction(action: LegalAction) {
     if (!this.assignedPlayer) return;
     if (this.role === 'host') {
       this.applyHostAction(this.assignedPlayer.id, action);
@@ -428,5 +408,16 @@ export class LocalMultiplayerAdapter implements MultiplayerAdapter {
         this.applyHostAction(player.id, action);
       }
     }, 500);
+  }
+  dispose() {
+    if (this.botTimer) {
+      clearTimeout(this.botTimer);
+      this.botTimer = null;
+    }
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.close();
+    }
+    this.socket = null;
+    this.pendingSocket = null;
   }
 }
