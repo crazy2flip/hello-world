@@ -35,6 +35,45 @@ body {
   margin: 1rem 0;
 }
 
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+
+.connection-status .status-detail {
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.status-connected {
+  background: #22c55e;
+}
+
+.status-dot.status-connecting {
+  background: #eab308;
+}
+
+.status-dot.status-reconnecting {
+  background: #f97316;
+}
+
+.status-dot.status-disconnected {
+  background: #ef4444;
+}
+
+.status-dot.status-idle {
+  background: #94a3b8;
+}
+
 .play-area.disabled {
   pointer-events: none;
   opacity: 0.75;

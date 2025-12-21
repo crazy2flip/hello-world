@@ -8,9 +8,18 @@ export interface GameController {
   getPlayers(): PlayerInfo[];
   getAssignedPlayer(): PlayerInfo | null;
   submitAction(action: LegalAction): void;
-  onStateChange(callback: (state: GameState) => void): void;
-  onPlayersChange(callback: (players: PlayerInfo[]) => void): void;
-  onPlayerJoin?(callback: (player: PlayerInfo) => void): void;
+  onStateChange(callback: (state: GameState) => void): () => void;
+  onPlayersChange(callback: (players: PlayerInfo[]) => void): () => void;
+  onPlayerJoin?(callback: (player: PlayerInfo) => void): () => void;
+  onConnectionStatusChange?(
+    callback: (event: {
+      status: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+      attempt?: number;
+      delayMs?: number;
+      code?: number;
+      reason?: string;
+    }) => void
+  ): () => void;
   setPlayers?(players: PlayerInfo[]): void;
   dispose(): void;
 }

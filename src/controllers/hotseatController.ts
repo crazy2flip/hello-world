@@ -54,10 +54,16 @@ export class HotseatController implements GameController {
 
   onStateChange(callback: (state: GameState) => void) {
     this.stateCallbacks.push(callback);
+    return () => {
+      this.stateCallbacks = this.stateCallbacks.filter((cb) => cb !== callback);
+    };
   }
 
   onPlayersChange(callback: (players: PlayerInfo[]) => void) {
     this.playerCallbacks.push(callback);
+    return () => {
+      this.playerCallbacks = this.playerCallbacks.filter((cb) => cb !== callback);
+    };
   }
 
   dispose() {
