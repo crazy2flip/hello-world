@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getBubbleOptions, getLegalActions, getMoveOptions, placementDestination, predictLandingForMove, topContiguousCount, isPinned } from './engine/engine';
 import { createInitialState } from './engine/state';
 import { BubbleAction, GameState, LegalAction, MoveAction, PlayerInfo } from './engine/types';
-import { LocalMultiplayerAdapter } from './multiplayer/adapter';
+import { HotseatController } from './controllers/hotseatController';
+import { NetworkController } from './multiplayer/adapter';
+import { GameController } from './controllers/types';
 
 const palette = ['#ef4444', '#3b82f6', '#10b981', '#f97316', '#a855f7', '#14b8a6', '#e11d48', '#0ea5e9'];
 
@@ -47,24 +49,29 @@ function nextBot(players: PlayerInfo[], difficulty: NonNullable<PlayerInfo['diff
 }
 
 export default function App() {
-  const [mode, setMode] = useState<'host' | 'client'>('host');
-  const [adapter, setAdapter] = useState<LocalMultiplayerAdapter | null>(null);
+  const [mode, setMode] = useState<'hotseat' | 'network'>('hotseat');
+  const [networkRole, setNetworkRole] = useState<'host' | 'client'>('host');
+  const [controller, setController] = useState<GameController | null>(() => {
+    const first = new HotseatController();
+    first.setPlayers?.(defaultPlayers());
+    return first;
+  });
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
   const [nameInput, setNameInput] = useState('Host');
-  const [players, setPlayers] = useState<PlayerInfo[]>([]);
+  const [players, setPlayers] = useState<PlayerInfo[]>(defaultPlayers());
   const [state, setState] = useState<GameState | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hoverSelection, setHoverSelection] = useState<Selection | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [status, setStatus] = useState('Pick a mode to begin.');
 
-  const assignedPlayer = adapter?.getAssignedPlayer() ?? null;
+  const assignedPlayer = controller?.getAssignedPlayer() ?? null;
   const started = !!state;
   const livePlayers = started ? state.players : players.length > 0 ? players : defaultPlayers();
   const liveState = state ?? createInitialState(livePlayers);
   const currentPlayer = liveState.players[liveState.currentIndex];
-  const myTurn = started && assignedPlayer?.id === currentPlayer?.id;
+  const myTurn = started && (mode === 'hotseat' || assignedPlayer?.id === currentPlayer?.id || controller?.role === 'local');
 
   useEffect(() => {
     if (toast) {
@@ -79,17 +86,24 @@ export default function App() {
   }, [liveState.currentIndex]);
 
   useEffect(() => {
-    if (!adapter) return;
+    if (!controller) return;
     const handleState = (s: GameState) => {
       setState(s);
       setSelection(null);
       setHoverSelection(null);
     };
     const handlePlayers = (list: PlayerInfo[]) => setPlayers(list);
-    adapter.onStateUpdate(handleState);
-    adapter.onPlayersChanged(handlePlayers);
-    adapter.onPlayerJoin((player) => setStatus(`${player.name} joined.`));
-  }, [adapter]);
+    controller.onStateChange(handleState);
+    controller.onPlayersChange(handlePlayers);
+    if (controller.kind === 'network') {
+      controller.onPlayerJoin?.((player) => setStatus(`${player.name} joined.`));
+    }
+    const initialPlayers = controller.getPlayers();
+    if (initialPlayers.length) setPlayers(initialPlayers);
+    const initialState = controller.getState();
+    if (initialState) setState(initialState);
+    return () => controller.dispose();
+  }, [controller]);
 
   const moveOptions = useMemo(() => (started ? getMoveOptions(liveState) : []), [started, liveState]);
   const bubbleOptions = useMemo(() => (started ? getBubbleOptions(liveState) : []), [started, liveState]);
@@ -122,10 +136,10 @@ export default function App() {
   };
 
   const handleTokenClick = (space: number, tokenIndex: number) => {
-    if (!started || liveState.winner || !myTurn || !adapter) return;
+    if (!started || liveState.winner || !myTurn || !controller) return;
     if (bubbleAllowed && isPinned(liveState.board[space], tokenIndex) && liveState.board[space][tokenIndex].player === currentPlayer.id) {
       const isLegal = legalActions.some((a) => a.type === 'bubble' && a.space === space && a.tokenIndex === tokenIndex);
-      if (isLegal) adapter.sendAction({ type: 'bubble', space, tokenIndex });
+      if (isLegal) controller.submitAction({ type: 'bubble', space, tokenIndex });
       return;
     }
     const res = beginMoveSelection(space, tokenIndex);
@@ -135,7 +149,7 @@ export default function App() {
   };
 
   const handleDestinationClick = (target: number | 'exit') => {
-    if (!selection || !started || !myTurn || !adapter) return;
+    if (!selection || !started || !myTurn || !controller) return;
     const match = destinationOptions.find((opt) =>
       opt.landing && (opt.landing.type === 'exit' ? target === 'exit' : opt.landing.index === target)
     );
@@ -143,7 +157,7 @@ export default function App() {
       setToast('Illegal move');
       return;
     }
-    adapter.sendAction(match.action);
+    controller.submitAction(match.action);
     setSelection(null);
   };
 
@@ -181,11 +195,11 @@ export default function App() {
   };
 
   const handleReserveClick = () => {
-    if (!canPlaceToken || !adapter) {
+    if (!canPlaceToken || !controller) {
       setToast('Placement not available');
       return;
     }
-    adapter.sendAction({ type: 'place' });
+    controller.submitAction({ type: 'place' });
   };
 
   const parseDrag = (e: React.DragEvent<HTMLElement>): DragPayload | null => {
@@ -198,21 +212,21 @@ export default function App() {
   };
 
   const tryBubbleDrop = (space: number, payload: DragPayload) => {
-    if (!bubbleAllowed || payload.kind !== 'bubble' || payload.space === undefined || payload.tokenIndex === undefined || !adapter)
+    if (!bubbleAllowed || payload.kind !== 'bubble' || payload.space === undefined || payload.tokenIndex === undefined || !controller)
       return false;
     if (payload.space !== space) return false;
     const isLegal = legalActions.some((a) => a.type === 'bubble' && a.space === payload.space && a.tokenIndex === payload.tokenIndex);
     if (isLegal) {
-      adapter.sendAction({ type: 'bubble', space: payload.space, tokenIndex: payload.tokenIndex });
+      controller.submitAction({ type: 'bubble', space: payload.space, tokenIndex: payload.tokenIndex });
       return true;
     }
     return false;
   };
 
   const tryPlaceDrop = (space: number, payload: DragPayload) => {
-    if (payload.kind !== 'place' || !adapter) return false;
+    if (payload.kind !== 'place' || !controller) return false;
     if (placementTarget === space && canPlaceToken) {
-      adapter.sendAction({ type: 'place' });
+      controller.submitAction({ type: 'place' });
       return true;
     }
     setToast('Place at highlighted slot');
@@ -220,14 +234,14 @@ export default function App() {
   };
 
   const tryMoveDrop = (space: number | 'exit', payload: DragPayload) => {
-    if (payload.kind !== 'move' || payload.from === undefined || payload.count === undefined || !adapter) return false;
+    if (payload.kind !== 'move' || payload.from === undefined || payload.count === undefined || !controller) return false;
     const dir = space === 'exit' ? 'forward' : space > payload.from ? 'forward' : 'backward';
     const action = moveOptions.find((m) => m.from === payload.from && m.count === payload.count && m.dir === dir);
     if (!action) return false;
     const landing = predictLandingForMove(liveState, action);
     if (space === 'exit' && landing?.type !== 'exit') return false;
     if (typeof space === 'number' && (!landing || landing.type !== 'space' || landing.index !== space)) return false;
-    adapter.sendAction(action);
+    controller.submitAction(action);
     setSelection(null);
     return true;
   };
@@ -250,14 +264,43 @@ export default function App() {
   const selectionInfo = selection ? `${selection.count} token(s) from space ${selection.space + 1}` : 'None';
   const placementInfo = canPlaceToken && placementTarget !== null ? `Drag to space ${placementTarget + 1}` : 'Placement locked';
 
+  const resetUI = (nextPlayers: PlayerInfo[] = defaultPlayers()) => {
+    setState(null);
+    setSelection(null);
+    setHoverSelection(null);
+    setToast(null);
+    setPlayers(nextPlayers);
+  };
+
+  const switchMode = (nextMode: 'hotseat' | 'network') => {
+    if (controller && controller.kind !== nextMode) {
+      controller.dispose();
+    }
+    setMode(nextMode);
+    setRoomCode(null);
+    setJoinCode('');
+    if (nextMode === 'hotseat') {
+      const hotseat = new HotseatController();
+      const defaults = defaultPlayers();
+      hotseat.setPlayers?.(defaults);
+      setController(hotseat);
+      resetUI(defaults);
+      setStatus('Local hotseat ready.');
+    } else {
+      setController(null);
+      resetUI([]);
+      setStatus('Pick host or join to begin.');
+    }
+  };
+
   const createRoom = async () => {
     const hostPlayer: PlayerInfo = { ...defaultPlayers(1)[0], name: nameInput.trim() || 'Host' };
     setStatus('Connecting to room server...');
     console.info('Creating room for host player', hostPlayer.name);
     try {
-      const host = new LocalMultiplayerAdapter('host');
+      const host = new NetworkController('host');
+      setController(host);
       await host.createRoom(hostPlayer);
-      setAdapter(host);
       setRoomCode(host.getRoomCode());
       setPlayers([hostPlayer]);
       setStatus('Room created. Share the code to invite others on your network.');
@@ -265,6 +308,7 @@ export default function App() {
       console.error('Room creation failed', err);
       setStatus(`Failed to create room: ${(err as Error).message}`);
       setToast('Could not create room. Ensure the room server is running and reachable.');
+      setController(null);
     }
   };
 
@@ -273,9 +317,9 @@ export default function App() {
     setStatus('Connecting to room...');
     console.info('Attempting to join room', trimmedCode);
     try {
-      const client = new LocalMultiplayerAdapter('client');
+      const client = new NetworkController('client');
+      setController(client);
       await client.joinRoom(trimmedCode, nameInput.trim() || 'Player');
-      setAdapter(client);
       setRoomCode(trimmedCode);
       setStatus('Joined room. Waiting for host to start.');
       if (client.getAssignedPlayer()) {
@@ -288,35 +332,59 @@ export default function App() {
       console.error('Join failed', err);
       setStatus(`Failed to join room: ${(err as Error).message}`);
       setToast('Could not join room. Check the room code and network connection.');
-      setAdapter(null);
+      setController(null);
     }
   };
 
+  const canEditLineup = mode === 'hotseat' || controller?.role === 'host';
+
+  const updatePlayersList = (next: PlayerInfo[]) => {
+    setPlayers(next);
+    controller?.setPlayers?.(next);
+  };
+
+  const addHuman = () => {
+    if (!canEditLineup || players.length >= 8) return;
+    const idx = players.length;
+    const newPlayer: PlayerInfo = {
+      id: `P${idx + 1}`,
+      name: `Player ${idx + 1}`,
+      color: palette[idx % palette.length],
+      kind: 'human'
+    };
+    updatePlayersList([...players, newPlayer]);
+  };
+
   const addBot = (difficulty: NonNullable<PlayerInfo['difficulty']> = 'medium') => {
-    if (!adapter || adapter.role !== 'host') return;
-    if (players.length >= 8) return;
+    if (!canEditLineup || players.length >= 8) return;
     const updated = [...players, nextBot(players, difficulty)];
-    adapter.setHostPlayers?.(updated);
+    updatePlayersList(updated);
+  };
+
+  const changePlayerType = (player: PlayerInfo, kind: PlayerInfo['kind'], difficulty?: PlayerInfo['difficulty']) => {
+    if (!canEditLineup) return;
+    const updated = players.map((p) => (p.id === player.id ? { ...p, kind, difficulty: kind === 'bot' ? difficulty : undefined } : p));
+    updatePlayersList(updated);
   };
 
   const removePlayer = (player: PlayerInfo) => {
-    if (!adapter || adapter.role !== 'host') return;
+    if (!canEditLineup) return;
     if (player.id === assignedPlayer?.id) return;
-    if (players.length <= 2) return;
+    if (players.length <= 2 && mode === 'hotseat') return;
     const updated = players.filter((p) => p.id !== player.id);
-    adapter.setHostPlayers?.(updated);
+    updatePlayersList(updated);
   };
 
   const startGame = () => {
-    if (!adapter || adapter.role !== 'host') return;
-    if (players.length < 2) return;
-    adapter.startGame(players);
-    setStatus('Game live. Host validates turns.');
+    if (!controller) return;
+    if (players.length < 2 || players.length > 8) return;
+    controller.startGame(players);
+    setStatus(mode === 'network' ? 'Game live. Host validates turns.' : 'Local match running.');
   };
 
   const restartGame = () => {
-    if (!adapter || adapter.role !== 'host') return;
-    adapter.startGame(players);
+    if (!controller || controller.role === 'client') return;
+    controller.startGame(players);
     setToast(null);
     setStatus('Rematch in progress.');
   };
@@ -343,7 +411,7 @@ export default function App() {
           <div className="legend">LAN-ready rooms with host-authoritative turns. Share your room code and play together.</div>
         </div>
         <div className="header-actions">
-          {adapter?.role === 'host' && started ? (
+          {controller?.role === 'host' && started ? (
             <>
               <button onClick={restartGame}>Restart</button>
               <button onClick={backToLobby}>Return to lobby</button>
@@ -359,9 +427,9 @@ export default function App() {
             <div className="player-row">
               <label>
                 Mode:
-                <select value={mode} onChange={(e) => setMode(e.target.value as 'host' | 'client')}>
-                  <option value="host">Host a room</option>
-                  <option value="client">Join a room</option>
+                <select value={mode} onChange={(e) => switchMode(e.target.value as 'hotseat' | 'network')}>
+                  <option value="hotseat">Local hotseat</option>
+                  <option value="network">Network (room code)</option>
                 </select>
               </label>
             </div>
@@ -371,14 +439,26 @@ export default function App() {
                 <input value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
               </label>
             </div>
-            {mode === 'host' ? (
+            {mode === 'network' ? (
               <div className="player-row">
-                <button onClick={createRoom} disabled={!!roomCode && adapter?.role === 'host'}>
+                <label>
+                  Network role:
+                  <select value={networkRole} onChange={(e) => setNetworkRole(e.target.value as 'host' | 'client')}>
+                    <option value="host">Host</option>
+                    <option value="client">Join</option>
+                  </select>
+                </label>
+              </div>
+            ) : null}
+            {mode === 'network' && networkRole === 'host' ? (
+              <div className="player-row">
+                <button onClick={createRoom} disabled={!!roomCode && controller?.role === 'host'}>
                   {roomCode ? 'Room ready' : 'Create room'}
                 </button>
                 {roomCode && <span className="pill">Code: {roomCode}</span>}
               </div>
-            ) : (
+            ) : null}
+            {mode === 'network' && networkRole === 'client' ? (
               <div className="player-row">
                 <input
                   value={joinCode}
@@ -390,8 +470,12 @@ export default function App() {
                   Join
                 </button>
               </div>
-            )}
-            <div className="player-row subtle">Only the host runs the rules engine; everyone else sends intents.</div>
+            ) : null}
+            <div className="player-row subtle">
+              {mode === 'hotseat'
+                ? 'All turns are local; add bots or humans and play instantly.'
+                : 'Only the host runs the rules engine; everyone else sends intents.'}
+            </div>
           </div>
 
           {players.map((p, idx) => (
@@ -401,7 +485,30 @@ export default function App() {
                 <strong>{p.name}</strong>
                 <span className="pill">{p.kind === 'bot' ? `${p.difficulty ?? 'medium'} bot` : 'Human'}</span>
               </div>
-              {adapter?.role === 'host' && idx > 0 && (
+              {canEditLineup && (
+                <div className="player-row">
+                  <label>
+                    Seat type:
+                    <select
+                      value={p.kind === 'bot' ? `bot-${p.difficulty ?? 'medium'}` : 'human'}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === 'human') changePlayerType(p, 'human');
+                        if (value.startsWith('bot')) {
+                          const [, level] = value.split('-');
+                          changePlayerType(p, 'bot', (level as PlayerInfo['difficulty']) ?? 'medium');
+                        }
+                      }}
+                    >
+                      <option value="human">Human</option>
+                      <option value="bot-easy">Bot: Easy</option>
+                      <option value="bot-medium">Bot: Medium</option>
+                      <option value="bot-hard">Bot: Hard</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+              {canEditLineup && idx > 0 && (
                 <div className="player-row">
                   <button onClick={() => removePlayer(p)} disabled={players.length <= 1}>
                     Remove
@@ -411,17 +518,26 @@ export default function App() {
             </div>
           ))}
 
-          {adapter?.role === 'host' && players.length < 8 && (
-            <button className="add-player" onClick={() => addBot('medium')}>
-              + Add AI player
-            </button>
+          {canEditLineup && players.length < 8 && (
+            <>
+              <button className="add-player" onClick={addHuman}>
+                + Add human player
+              </button>
+              <button className="add-player" onClick={() => addBot('medium')}>
+                + Add AI player
+              </button>
+            </>
           )}
         </div>
-        {adapter?.role === 'host' && (
+        {canEditLineup && (
           <div className="setup-actions">
-            <div>Share the room code after creating it. Players join and receive state from the host.</div>
-            <div className="subtle">Want to play solo? Start now with just the host seat, or add bots for practice.</div>
-            <button onClick={startGame} disabled={players.length < 1 || !roomCode}>
+            <div>
+              {mode === 'network'
+                ? 'Share the room code after creating it. Players join and receive state from the host.'
+                : 'Ready to play right here? Start now with your local seats and optional bots.'}
+            </div>
+            <div className="subtle">Want to play solo? Start now with just the first seat, or add bots for practice.</div>
+            <button onClick={startGame} disabled={players.length < 2 || (mode === 'network' && !roomCode)}>
               Start game
             </button>
           </div>
@@ -585,8 +701,8 @@ export default function App() {
         <div className="message celebration">
           🎉 {liveState.players.find((p) => p.id === liveState.winner)?.name ?? liveState.winner} conquers the stack! Ready for a rematch?
           <div className="celebration-actions">
-            {adapter?.role === 'host' && <button onClick={restartGame}>Rematch</button>}
-            {adapter?.role === 'host' && <button onClick={backToLobby}>Change lineup</button>}
+            {controller?.role === 'host' && <button onClick={restartGame}>Rematch</button>}
+            {controller?.role === 'host' && <button onClick={backToLobby}>Change lineup</button>}
           </div>
         </div>
       )}
