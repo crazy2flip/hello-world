@@ -21,6 +21,18 @@ npm run dev
 Once it starts you will see a local URL such as `http://localhost:5173/`.
 In this environment open the “Web 5173” preview to launch the app in your browser.
 
+If you want clients on other devices or networks to reach the room server, expose it publicly (or on your LAN) and configure the
+ front end with its address:
+
+```bash
+# examples
+VITE_ROOM_SERVER_URL="ws://your.public.host:8787" npm run dev
+VITE_ROOM_SERVER_HOST=192.168.1.10 VITE_ROOM_SERVER_PORT=8787 npm run dev
+```
+
+`VITE_ROOM_SERVER_URL` overrides everything; otherwise `VITE_ROOM_SERVER_HOST` and `VITE_ROOM_SERVER_PORT` override the defaults
+ of `window.location.hostname` and `8787`.
+
 Run tests:
 
 ```bash
