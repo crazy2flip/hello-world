@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBubbleOptions, getLegalActions, getMoveOptions, placementDestination, predictLandingForMove, topContiguousCount, isPinned } from './engine/engine';
 import { createInitialState } from './engine/state';
 import { BubbleAction, GameState, LegalAction, MoveAction, PlayerInfo } from './engine/types';
 import { HotseatController } from './controllers/hotseatController';
-import { NetworkController } from './multiplayer/adapter';
+import { ConnectionStatus, NetworkController } from './multiplayer/adapter';
 import { GameController } from './controllers/types';
 
 const palette = ['#ef4444', '#3b82f6', '#10b981', '#f97316', '#a855f7', '#14b8a6', '#e11d48', '#0ea5e9'];
@@ -56,6 +56,7 @@ export default function App() {
     first.setPlayers?.(defaultPlayers());
     return first;
   });
+  const controllerRef = useRef<GameController | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState('');
   const [nameInput, setNameInput] = useState('Host');
@@ -65,6 +66,8 @@ export default function App() {
   const [hoverSelection, setHoverSelection] = useState<Selection | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [status, setStatus] = useState('Pick a mode to begin.');
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
+  const [disconnectDetails, setDisconnectDetails] = useState<string | null>(null);
   const [hotseatEvents, setHotseatEvents] = useState<string[]>([]);
 
   const assignedPlayer = controller?.getAssignedPlayer() ?? null;
@@ -73,6 +76,26 @@ export default function App() {
   const liveState = state ?? createInitialState(livePlayers);
   const currentPlayer = liveState.players[liveState.currentIndex];
   const myTurn = started && (mode === 'hotseat' || assignedPlayer?.id === currentPlayer?.id || controller?.role === 'local');
+
+  const updateController = useCallback((next: GameController | null) => {
+    setController((prev) => {
+      if (prev && prev !== next) {
+        prev.dispose();
+      }
+      controllerRef.current = next;
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    controllerRef.current = controller;
+  }, [controller]);
+
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.dispose();
+    };
+  }, []);
 
   const recordHotseatEvent = useCallback(
     (message: string) => {
@@ -109,16 +132,42 @@ export default function App() {
       setHoverSelection(null);
     };
     const handlePlayers = (list: PlayerInfo[]) => setPlayers(list);
-    controller.onStateChange(handleState);
-    controller.onPlayersChange(handlePlayers);
-    if (controller.kind === 'network') {
-      controller.onPlayerJoin?.((player) => setStatus(`${player.name} joined.`));
-    }
+    const disposeState = controller.onStateChange(handleState);
+    const disposePlayers = controller.onPlayersChange(handlePlayers);
+    const disposeJoin =
+      controller.kind === 'network' ? controller.onPlayerJoin?.((player) => setStatus(`${player.name} joined.`)) : undefined;
     const initialPlayers = controller.getPlayers();
     if (initialPlayers.length) setPlayers(initialPlayers);
     const initialState = controller.getState();
     if (initialState) setState(initialState);
-    return () => controller.dispose();
+    return () => {
+      disposeState?.();
+      disposePlayers?.();
+      disposeJoin?.();
+    };
+  }, [controller]);
+
+  useEffect(() => {
+    if (controller?.kind !== 'network') {
+      setConnectionStatus('idle');
+      setDisconnectDetails(null);
+      return;
+    }
+    setConnectionStatus(controller.getConnectionStatus());
+    const cleanup = controller.onConnectionStatusChange?.((event) => {
+      setConnectionStatus(event.status);
+      if (event.status === 'disconnected') {
+        const detail = `Disconnected (code ${event.code ?? 'unknown'}${event.reason ? `: ${event.reason}` : ''})`;
+        setDisconnectDetails(detail);
+        setToast(detail);
+      } else if (event.status === 'reconnecting') {
+        setStatus('Connection lost. Reconnecting...');
+        setDisconnectDetails(event.reason ? `Retrying after ${event.reason}` : 'Retrying...');
+      } else if (event.status === 'connected') {
+        setDisconnectDetails(null);
+      }
+    });
+    return () => cleanup?.();
   }, [controller]);
 
   const moveOptions = useMemo(() => (started ? getMoveOptions(liveState) : []), [started, liveState]);
@@ -324,15 +373,17 @@ export default function App() {
     setMode(nextMode);
     setRoomCode(null);
     setJoinCode('');
+    setConnectionStatus('idle');
+    setDisconnectDetails(null);
     if (nextMode === 'hotseat') {
       const hotseat = new HotseatController();
       const defaults = defaultPlayers();
       hotseat.setPlayers?.(defaults);
-      setController(hotseat);
+      updateController(hotseat);
       resetUI(defaults);
       setStatus('Local hotseat ready.');
     } else {
-      setController(null);
+      updateController(null);
       resetUI([]);
       setStatus('Pick host or join to begin.');
     }
@@ -344,7 +395,7 @@ export default function App() {
     console.info('Creating room for host player', hostPlayer.name);
     try {
       const host = new NetworkController('host');
-      setController(host);
+      updateController(host);
       await host.createRoom(hostPlayer);
       setRoomCode(host.getRoomCode());
       setPlayers([hostPlayer]);
@@ -353,7 +404,7 @@ export default function App() {
       console.error('Room creation failed', err);
       setStatus(`Failed to create room: ${(err as Error).message}`);
       setToast('Could not create room. Ensure the room server is running and reachable.');
-      setController(null);
+      updateController(null);
     }
   };
 
@@ -363,7 +414,7 @@ export default function App() {
     console.info('Attempting to join room', trimmedCode);
     try {
       const client = new NetworkController('client');
-      setController(client);
+      updateController(client);
       await client.joinRoom(trimmedCode, nameInput.trim() || 'Player');
       setRoomCode(trimmedCode);
       setStatus('Joined room. Waiting for host to start.');
@@ -377,7 +428,7 @@ export default function App() {
       console.error('Join failed', err);
       setStatus(`Failed to join room: ${(err as Error).message}`);
       setToast('Could not join room. Check the room code and network connection.');
-      setController(null);
+      updateController(null);
     }
   };
 
@@ -447,6 +498,16 @@ export default function App() {
     : liveState.winner
       ? `${liveState.players.find((p) => p.id === liveState.winner)?.name ?? liveState.winner} wins!`
       : `${currentPlayer?.name ?? '—'} to act`;
+  const connectionLabel =
+    connectionStatus === 'connected'
+      ? 'Connected'
+      : connectionStatus === 'connecting'
+        ? 'Connecting...'
+        : connectionStatus === 'reconnecting'
+          ? 'Reconnecting...'
+          : connectionStatus === 'disconnected'
+            ? 'Disconnected'
+            : 'Idle';
 
   return (
     <div className="app">
@@ -734,6 +795,13 @@ export default function App() {
         </div>
         <div className="control-card">
           <h3>Status</h3>
+          <div className="connection-status">
+            <span className={`status-dot status-${connectionStatus}`} aria-label={`connection-${connectionStatus}`} />
+            <div>
+              <div>{connectionLabel}</div>
+              {disconnectDetails && <div className="status-detail">{disconnectDetails}</div>}
+            </div>
+          </div>
           <div>Selected: {selectionInfo}</div>
           <div>Placement: {placementInfo}</div>
           <div>Bubble: {bubbleAllowed ? 'Drag any pinned token you own.' : 'Unavailable this turn.'}</div>

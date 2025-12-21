@@ -52,6 +52,7 @@ type RoomMessage = JoinRequest | JoinAccept | JoinReject | PlayerUpdate | StateU
 
 const palette = ['#ef4444', '#3b82f6', '#10b981', '#f97316', '#a855f7', '#14b8a6', '#e11d48', '#0ea5e9'];
 const activeRoomCodes = new Set<string>();
+export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 export class NetworkController implements GameController {
   public kind: GameController['kind'] = 'network';
@@ -70,6 +71,14 @@ export class NetworkController implements GameController {
   private hostPlayers: PlayerInfo[] = [];
   private state: GameState | null = null;
   private botTimer: number | null = null;
+  private disposed = false;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempts = 0;
+  private static connectionSequence = 1;
+  private connectionId: number | null = null;
+  private connectionStatus: ConnectionStatus = 'idle';
+  private connectionCallbacks: ((event: { status: ConnectionStatus; attempt?: number; delayMs?: number; code?: number; reason?: string }) => void)[] = [];
+  private joinSentForConnection = false;
 
   constructor(role: 'host' | 'client') {
     this.role = role;
@@ -80,6 +89,15 @@ export class NetworkController implements GameController {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const port = 8787;
     return `${protocol}://${host}:${port}`;
+  }
+
+  private setConnectionStatus(status: ConnectionStatus, meta?: { attempt?: number; delayMs?: number; code?: number; reason?: string }) {
+    this.connectionStatus = status;
+    this.connectionCallbacks.forEach((cb) => cb({ status, ...meta }));
+  }
+
+  getConnectionStatus() {
+    return this.connectionStatus;
   }
 
   getAssignedPlayer() {
@@ -100,38 +118,91 @@ export class NetworkController implements GameController {
 
   onStateChange(cb: (state: GameState) => void) {
     this.callbacks.state.push(cb);
+    return () => {
+      this.callbacks.state = this.callbacks.state.filter((fn) => fn !== cb);
+    };
   }
 
   onPlayerJoin(cb: (player: PlayerInfo) => void) {
     this.callbacks.join.push(cb);
+    return () => {
+      this.callbacks.join = this.callbacks.join.filter((fn) => fn !== cb);
+    };
   }
 
   onPlayerLeave(cb: (playerId: string) => void) {
     this.callbacks.leave.push(cb);
+    return () => {
+      this.callbacks.leave = this.callbacks.leave.filter((fn) => fn !== cb);
+    };
   }
 
   onPlayersChange(cb: (players: PlayerInfo[]) => void) {
     this.callbacks.players.push(cb);
+    return () => {
+      this.callbacks.players = this.callbacks.players.filter((fn) => fn !== cb);
+    };
   }
 
   onPlayersChanged(cb: (players: PlayerInfo[]) => void) {
     this.callbacks.players.push(cb);
+    return () => {
+      this.callbacks.players = this.callbacks.players.filter((fn) => fn !== cb);
+    };
+  }
+
+  private clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private scheduleReconnect(roomCode: string, code?: number, reason?: string) {
+    if (this.disposed || !roomCode) return;
+    this.clearReconnectTimer();
+    this.reconnectAttempts += 1;
+    const delay = Math.min(30000, 500 * 2 ** Math.min(this.reconnectAttempts - 1, 5));
+    console.info(`[room] reconnect attempt ${this.reconnectAttempts} in ${delay}ms for room ${roomCode}`);
+    this.setConnectionStatus('reconnecting', { attempt: this.reconnectAttempts, delayMs: delay, code, reason });
+    this.reconnectTimer = window.setTimeout(() => {
+      if (this.disposed || this.roomCode !== roomCode) return;
+      console.info(`[room] reconnecting now (attempt ${this.reconnectAttempts})`);
+      this.ensureSocket(roomCode).catch((err) => console.error('[room] reconnect failed', err));
+    }, delay);
+  }
+
+  onConnectionStatusChange(
+    callback: (event: { status: ConnectionStatus; attempt?: number; delayMs?: number; code?: number; reason?: string }) => void
+  ) {
+    this.connectionCallbacks.push(callback);
+    return () => {
+      this.connectionCallbacks = this.connectionCallbacks.filter((fn) => fn !== callback);
+    };
   }
 
   private ensureSocket(roomCode: string) {
     if (this.roomCode && this.roomCode !== roomCode && this.socket) {
-      this.socket.close();
+      this.socket.close(1000, 'switching rooms');
       this.socket = null;
     }
 
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.setConnectionStatus('connected');
+      return Promise.resolve();
+    }
     if (this.pendingSocket) return this.pendingSocket;
 
     const url = this.getRoomSocketUrl();
-    console.info('[room] opening websocket to', url, 'for room', roomCode);
+    this.connectionId = NetworkController.connectionSequence++;
+    this.joinSentForConnection = false;
+    this.disposed = false;
+    this.setConnectionStatus('connecting');
+    console.info(`[room] creating websocket #${this.connectionId} -> ${url} (room ${roomCode})`);
 
     this.pendingSocket = new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url);
+      const currentConnectionId = this.connectionId;
       let settled = false;
 
       const cleanup = () => {
@@ -139,16 +210,26 @@ export class NetworkController implements GameController {
         ws.removeEventListener('error', handleError);
       };
 
-      const handleOpen = () => {
-        console.info('[room] websocket connected');
+      const sendJoin = () => {
+        if (this.joinSentForConnection || ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify({ type: 'join-room', roomCode }));
+        this.joinSentForConnection = true;
+        console.info(`[room] websocket #${currentConnectionId} sent join for ${roomCode}`);
+      };
+
+      const handleOpen = () => {
+        console.info(`[room] websocket #${currentConnectionId} connected`);
+        sendJoin();
         settled = true;
+        this.reconnectAttempts = 0;
+        this.clearReconnectTimer();
+        this.setConnectionStatus('connected');
         cleanup();
         resolve();
       };
 
       const handleError = (event: Event) => {
-        console.error('[room] websocket error', event);
+        console.error(`[room] websocket #${currentConnectionId} error`, event);
         if (!settled) {
           settled = true;
           cleanup();
@@ -159,10 +240,16 @@ export class NetworkController implements GameController {
       ws.addEventListener('open', handleOpen);
       ws.addEventListener('error', handleError);
 
-      ws.addEventListener('close', () => {
-        console.warn('[room] websocket closed');
+      ws.addEventListener('close', (event) => {
+        const reason = event.reason || '<none>';
+        console.warn(`[room] websocket #${currentConnectionId} closed code=${event.code} reason=${reason}`);
         this.socket = null;
         this.pendingSocket = null;
+        this.joinSentForConnection = false;
+        this.setConnectionStatus('disconnected', { code: event.code, reason });
+        if (!this.disposed && this.roomCode === roomCode) {
+          this.scheduleReconnect(roomCode, event.code, reason);
+        }
       });
 
       ws.addEventListener('message', (event) => {
@@ -410,14 +497,19 @@ export class NetworkController implements GameController {
     }, 500);
   }
   dispose() {
+    this.disposed = true;
+    this.clearReconnectTimer();
     if (this.botTimer) {
       clearTimeout(this.botTimer);
       this.botTimer = null;
     }
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.close();
+    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      this.socket.close(1000, 'controller disposed');
     }
     this.socket = null;
     this.pendingSocket = null;
+    this.roomCode = null;
+    this.joinSentForConnection = false;
+    this.setConnectionStatus('idle');
   }
 }
