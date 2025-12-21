@@ -71,6 +71,31 @@ describe('movement restrictions', () => {
   });
 });
 
+describe('legal action flow', () => {
+  it('generates move actions and applies them', () => {
+    const state = withState({
+      board: [
+        [token('RED')],
+        [token('BLUE')],
+        [],
+        [],
+        [],
+        [],
+        [],
+        []
+      ],
+      currentIndex: 0,
+      unplaced: { RED: 0, BLUE: 0 }
+    });
+
+    expect(getLegalActions(state)).toContainEqual({ type: 'move', from: 0, dir: 'forward', count: 1 });
+
+    const after = applyAction(state, { type: 'move', from: 0, dir: 'forward', count: 1 });
+    expect(after.board[1].at(-1)?.player).toBe('RED');
+    expect(after.currentIndex).toBe(1);
+  });
+});
+
 describe('pinning and exiting', () => {
   it('pins when moving forward and backward', () => {
     const base = withState({

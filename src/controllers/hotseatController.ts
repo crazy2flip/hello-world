@@ -41,8 +41,13 @@ export class HotseatController implements GameController {
   submitAction(action: LegalAction) {
     if (!this.state || this.state.winner) return;
     const legal = getLegalActions(this.state).some((candidate) => JSON.stringify(candidate) === JSON.stringify(action));
-    if (!legal) return;
+    console.debug('[hotseat] submitAction received', action, 'legal?', legal);
+    if (!legal) {
+      console.warn('[hotseat] illegal action rejected', action);
+      return;
+    }
     this.state = applyAction(this.state, action);
+    console.debug('[hotseat] action applied; next player index', this.state.currentIndex);
     this.emitState();
     this.scheduleBot();
   }
@@ -79,7 +84,8 @@ export class HotseatController implements GameController {
     if (this.botTimer) {
       clearTimeout(this.botTimer);
     }
-    this.botTimer = window.setTimeout(() => {
+    const timerHost = typeof window !== 'undefined' ? window : globalThis;
+    this.botTimer = timerHost.setTimeout(() => {
       const action = chooseBotAction(this.state!, player.difficulty || 'medium');
       if (action) {
         this.submitAction(action);

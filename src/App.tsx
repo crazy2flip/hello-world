@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBubbleOptions, getLegalActions, getMoveOptions, placementDestination, predictLandingForMove, topContiguousCount, isPinned } from './engine/engine';
 import { createInitialState } from './engine/state';
 import { BubbleAction, GameState, LegalAction, MoveAction, PlayerInfo } from './engine/types';
@@ -65,6 +65,7 @@ export default function App() {
   const [hoverSelection, setHoverSelection] = useState<Selection | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [status, setStatus] = useState('Pick a mode to begin.');
+  const [hotseatEvents, setHotseatEvents] = useState<string[]>([]);
 
   const assignedPlayer = controller?.getAssignedPlayer() ?? null;
   const started = !!state;
@@ -72,6 +73,15 @@ export default function App() {
   const liveState = state ?? createInitialState(livePlayers);
   const currentPlayer = liveState.players[liveState.currentIndex];
   const myTurn = started && (mode === 'hotseat' || assignedPlayer?.id === currentPlayer?.id || controller?.role === 'local');
+
+  const recordHotseatEvent = useCallback(
+    (message: string) => {
+      if (mode !== 'hotseat' || !import.meta.env.DEV) return;
+      setHotseatEvents((prev) => [message, ...prev].slice(0, 30));
+      console.debug('[hotseat]', message);
+    },
+    [mode]
+  );
 
   useEffect(() => {
     if (toast) {
@@ -84,6 +94,12 @@ export default function App() {
     setSelection(null);
     setHoverSelection(null);
   }, [liveState.currentIndex]);
+
+  useEffect(() => {
+    if (mode !== 'hotseat') {
+      setHotseatEvents([]);
+    }
+  }, [mode]);
 
   useEffect(() => {
     if (!controller) return;
@@ -112,6 +128,12 @@ export default function App() {
   const canPlaceToken = started && myTurn && legalActions.some((a) => a.type === 'place');
   const bubbleAllowed = started && myTurn && bubbleOptions.length > 0 && moveOptions.length === 0 && !canPlaceToken;
 
+  useEffect(() => {
+    if (!started || mode !== 'hotseat') return;
+    const summary = legalActions.map((a) => a.type).join(', ') || 'none';
+    recordHotseatEvent(`Turn ${currentPlayer.id}: ${legalActions.length} legal action(s) [${summary}]`);
+  }, [started, mode, legalActions, currentPlayer, recordHotseatEvent]);
+
   const destinationOptions = useMemo(() => {
     if (!selection) return [] as { landing: ReturnType<typeof predictLandingForMove>; action: MoveAction }[];
     return moveOptions
@@ -120,9 +142,17 @@ export default function App() {
       .filter((item) => item.landing !== null);
   }, [selection, moveOptions, liveState]);
 
+  useEffect(() => {
+    if (!selection || mode !== 'hotseat' || !import.meta.env.DEV) return;
+    const targets = destinationOptions
+      .map((opt) => (opt.landing?.type === 'exit' ? 'exit' : `space ${opt.landing?.index! + 1}`))
+      .join(', ');
+    recordHotseatEvent(`Computed move targets for space ${selection.space + 1} (${selection.count}): ${targets || 'none'}`);
+  }, [destinationOptions, selection, mode, recordHotseatEvent]);
+
   const beginMoveSelection = (space: number, tokenIndex: number) => {
     const stack = liveState.board[space];
-    const playerId = assignedPlayer?.id;
+    const playerId = mode === 'hotseat' ? currentPlayer.id : assignedPlayer?.id;
     if (!playerId) return null;
     const topCount = topContiguousCount(stack, playerId);
     const topStart = stack.length - topCount;
@@ -131,12 +161,20 @@ export default function App() {
     const count = stack.length - tokenIndex;
     const hasMove = moveOptions.some((m) => m.from === space && m.count === count);
     if (!hasMove) return null;
+    recordHotseatEvent(`Selected ${count} token(s) from space ${space + 1} for player ${playerId}`);
     setSelection({ space, count });
     return { space, count };
   };
 
   const handleTokenClick = (space: number, tokenIndex: number) => {
     if (!started || liveState.winner || !myTurn || !controller) return;
+    const token = liveState.board[space]?.[tokenIndex];
+    if (token && mode === 'hotseat') {
+      const owner = liveState.players.find((p) => p.id === token.player);
+      recordHotseatEvent(
+        `Clicked token at space ${space + 1}, stack index ${tokenIndex + 1} belonging to ${token.player} (${owner?.color ?? 'no color'})`
+      );
+    }
     if (bubbleAllowed && isPinned(liveState.board[space], tokenIndex) && liveState.board[space][tokenIndex].player === currentPlayer.id) {
       const isLegal = legalActions.some((a) => a.type === 'bubble' && a.space === space && a.tokenIndex === tokenIndex);
       if (isLegal) controller.submitAction({ type: 'bubble', space, tokenIndex });
@@ -145,6 +183,7 @@ export default function App() {
     const res = beginMoveSelection(space, tokenIndex);
     if (!res) {
       setToast('Illegal selection');
+      recordHotseatEvent('Selection rejected; token not movable.');
     }
   };
 
@@ -155,8 +194,14 @@ export default function App() {
     );
     if (!match) {
       setToast('Illegal move');
+      recordHotseatEvent('Destination click rejected; no matching landing.');
       return;
     }
+    recordHotseatEvent(
+      `Submitting move from space ${match.action.from + 1} ${match.action.dir} by ${match.action.count} token(s) toward ${
+        target === 'exit' ? 'exit' : `space ${Number(target) + 1}`
+      }`
+    );
     controller.submitAction(match.action);
     setSelection(null);
   };
@@ -695,6 +740,34 @@ export default function App() {
           <div>Room: {roomCode ?? 'Not connected'}</div>
           <div>You are: {assignedPlayer?.name ?? '—'}</div>
         </div>
+        {mode === 'hotseat' && import.meta.env.DEV && (
+          <div className="control-card">
+            <h3>Hotseat debug</h3>
+            <div>
+              Current player: {currentPlayer.name} ({currentPlayer.id})
+            </div>
+            <div>
+              Legal actions: {legalActions.length} [{legalActions.map((a) => a.type).join(', ')}]
+            </div>
+            <div>Selection: {selection ? `${selection.count} from space ${selection.space + 1}` : 'None'}</div>
+            <div>
+              Destinations: {destinationOptions.length}
+              {destinationOptions.length > 0
+                ? ` (${destinationOptions
+                    .map((opt) => (opt.landing?.type === 'exit' ? 'exit' : `space ${opt.landing?.index! + 1}`))
+                    .join(', ')})`
+                : ''}
+            </div>
+            <div className="player-row" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+              <strong>Recent events</strong>
+              <ol style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                {hotseatEvents.slice(0, 6).map((item, idx) => (
+                  <li key={idx}>{item}</li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        )}
       </div>
 
       {liveState.winner && (
